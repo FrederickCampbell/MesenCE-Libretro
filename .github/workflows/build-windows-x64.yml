@@ -1,0 +1,74 @@
+name: Build Windows x64
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "Core/**"
+      - "Utilities/**"
+      - "Libretro/**"
+      - "BUILD_WINDOWS_X64.ps1"
+      - ".github/workflows/build-windows-x64.yml"
+  pull_request:
+    paths:
+      - "Core/**"
+      - "Utilities/**"
+      - "Libretro/**"
+      - "BUILD_WINDOWS_X64.ps1"
+      - ".github/workflows/build-windows-x64.yml"
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up MSYS2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            make
+            git
+            patch
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-binutils
+            mingw-w64-x86_64-winpthreads
+            mingw-w64-x86_64-zlib
+            mingw-w64-x86_64-libpng
+
+      - name: Build
+        shell: msys2 {0}
+        run: |
+          set -e
+          find . -type f -name '*.o' -delete
+          make --no-print-directory -C Libretro platform=win64 LTO=false -j4
+
+      - name: Stage artifact
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+
+          $dll = Get-ChildItem Libretro -Recurse -File -Include "*_libretro.dll","mesen*.dll" |
+              Sort-Object LastWriteTime -Descending |
+              Select-Object -First 1
+
+          if (-not $dll) {
+              throw "No Libretro DLL was produced."
+          }
+
+          Copy-Item $dll.FullName dist/mesen_ce_nes_libretro.dll
+          Copy-Item info/mesen_ce_nes_libretro.info dist/mesen_ce_nes_libretro.info
+
+          $hash = (Get-FileHash dist/mesen_ce_nes_libretro.dll -Algorithm SHA256).Hash.ToLowerInvariant()
+          Set-Content -Encoding ASCII dist/SHA256SUMS.txt "$hash  mesen_ce_nes_libretro.dll"
+
+      - name: Upload core
+        uses: actions/upload-artifact@v4
+        with:
+          name: mesen-ce-libretro-windows-x64
+          path: dist/*

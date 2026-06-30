@@ -1,0 +1,83 @@
+# Build output
+/dist/
+/build/
+/out/
+/artifacts/
+build-transcript.txt
+
+# Libretro build products
+Libretro/*.dll
+Libretro/*.map
+Libretro/*.o
+Libretro/**/*.o
+Libretro/*.d
+Libretro/**/*.d
+
+# Native compiler output
+*.obj
+*.pdb
+*.ilk
+*.exp
+*.gcda
+*.gcno
+
+# IDE and editor state
+.vs/
+.vscode/
+.idea/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Logs and crash captures
+*.log
+mesen-ce-gdb-*.txt
+mesen-ce-gdb-*.log
+
+# Local test content and firmware
+*.nes
+*.fds
+*.unf
+*.unif
+*.sfc
+*.smc
+*.gb
+*.gbc
+*.gba
+disksys.rom
+FdsBios.bin
+/HdPacks/
+
+# Archives and local backups
+*.7z
+*.rar
+*.backup-*
+*.orig
+*.rej
+
+# OS metadata
+Thumbs.db
+Desktop.ini
+.DS_Store
+*.o
+*.d
+*.map
+/release-stage/
+/MesenCE-Libretro-v*-Windows-x64.zip
+/PUBLICATION_SUMMARY.txt
+# Generated native build artifacts
+*.dep
+*.dll
+*.exe
+DLL_IMPORTS.txt
+SHA256SUMS.txt
+# Local release and smoke-test files
+/BUILD_AND_RUN_MESENCE_TEST*.ps1
+/LAUNCH_MESENCE_TEST.ps1
+/CREATE_PRIVACY_SAFE_MESENCE_REPO*.ps1
+# Local content, firmware, and HD packs
