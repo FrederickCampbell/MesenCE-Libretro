@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.26
+
+- Fixed RetroArch cheat support.
+- Added expanded System, Video, Audio, Input, Enhancements, and Advanced core options.
+- Added clear descriptions and recommended values for each option.
+
 ## 1.0.25
 
 - Replaced the universal 15 ms decoded-frame polling delay with immediate event-driven synchronization.

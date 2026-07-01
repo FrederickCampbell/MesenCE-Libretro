@@ -7,6 +7,8 @@
 #include <fstream>
 #include <vector>
 #include <iterator>
+#include <cctype>
+#include <cstring>
 #include "LibretroKeyManager.h"
 #include "LibretroMessageManager.h"
 #include "libretro.h"
@@ -81,6 +83,14 @@ static unsigned _libretroLastThrottleMode = RETRO_THROTTLE_NONE;
 static bool _libretroWasFastForwarding = false;
 static bool _libretroCanDupe = false;
 static uint64_t _libretroFastForwardExitFences = 0;
+
+// MESENCE_CHEATS_OPTIONS_V1_0_26
+struct LibretroCheatSlot {
+	bool Enabled = false;
+	std::string Code;
+};
+static std::vector<LibretroCheatSlot> _libretroCheatSlots;
+static int _famicomMicrophoneButton = -1;
 
 static void ConfigureRetroArchFolders()
 {
@@ -343,33 +353,64 @@ static constexpr const char* MesenNtscFilter = "mesen_ntsc_filter";
 static constexpr const char* MesenPalette = "mesen_palette";
 static constexpr const char* MesenSpriteLimit = "mesen_sprite_limit";
 static constexpr const char* MesenEnablePalBorders = "mesen_enable_pal_borders";
-static constexpr const char* MesenSpritesEnabled = "mesen_sprites_enabled";
-static constexpr const char* MesenBackgroundEnabled = "mesen_background_enabled";
-static constexpr const char* MesenAllowInvalidInput = "mesen_allow_invalid_input";
-static constexpr const char* MesenDisableGameGenieBusConflicts = "mesen_disable_game_genie_bus_conflicts";
-static constexpr const char* MesenRandomizeMapperPowerOnState = "mesen_randomize_mapper_power_on_state";
-static constexpr const char* MesenRandomizeCpuPpuAlignment = "mesen_randomize_cpu_ppu_alignment";
-static constexpr const char* MesenOverclock = "mesen_overclock";
-static constexpr const char* MesenOverclockType = "mesen_overclock_type";
-//static constexpr const char* MesenOverscanLeft = "mesen_overscan_left";
-//static constexpr const char* MesenOverscanRight = "mesen_overscan_right";
-//static constexpr const char* MesenOverscanTop = "mesen_overscan_up";
-//static constexpr const char* MesenOverscanBottom = "mesen_overscan_down";
-//static constexpr const char* MesenAspectRatio = "mesen_aspect_ratio";
+static constexpr const char* MesenOverscanLeft = "mesen_overscan_left";
+static constexpr const char* MesenOverscanRight = "mesen_overscan_right";
+static constexpr const char* MesenOverscanTop = "mesen_overscan_up";
+static constexpr const char* MesenOverscanBottom = "mesen_overscan_down";
 static constexpr const char* MesenRegion = "mesen_region";
+static constexpr const char* MesenConsoleModel = "mesen_console_model";
+static constexpr const char* MesenGameDatabase = "mesen_game_database";
 static constexpr const char* MesenRamState = "mesen_ramstate";
 static constexpr const char* MesenControllerTurboSpeed = "mesen_controllerturbospeed";
+static constexpr const char* MesenShiftButtonsClockwise = "mesen_shift_buttons_clockwise";
+static constexpr const char* MesenAllowInvalidInput = "mesen_allow_invalid_input";
+static constexpr const char* MesenZapperRadius = "mesen_zapper_radius";
+static constexpr const char* MesenFamicomMicrophoneButton = "mesen_famicom_microphone_button";
+static constexpr const char* MesenFdsAutoLoadDisk = "mesen_fds_auto_load_disk";
 static constexpr const char* MesenFdsAutoSelectDisk = "mesen_fdsautoinsertdisk";
 static constexpr const char* MesenFdsFastForwardLoad = "mesen_fdsfastforwardload";
 static constexpr const char* MesenHdPacks = "mesen_hdpacks";
-// static constexpr const char* MesenScreenRotation = "mesen_screenrotation";
-static constexpr const char* MesenFakeStereo = "mesen_fake_stereo";
+static constexpr const char* MesenStereoEffect = "mesen_stereo_effect";
 static constexpr const char* MesenMuteTriangleUltrasonic = "mesen_mute_triangle_ultrasonic";
 static constexpr const char* MesenReduceDmcPopping = "mesen_reduce_dmc_popping";
 static constexpr const char* MesenSwapDutyCycle = "mesen_swap_duty_cycle";
 static constexpr const char* MesenDisableNoiseModeFlag = "mesen_disable_noise_mode_flag";
-// static constexpr const char* MesenShiftButtonsClockwise = "mesen_shift_buttons_clockwise";
-static constexpr const char* MesenAudioSampleRate = "mesen_audio_sample_rate";
+static constexpr const char* MesenReverseDpcmBitOrder = "mesen_reverse_dpcm_bit_order";
+static constexpr const char* MesenOverclock = "mesen_overclock";
+static constexpr const char* MesenOverclockType = "mesen_overclock_type";
+
+static constexpr const char* MesenChannelVolumeKeys[11] = {
+	"mesen_volume_pulse1", "mesen_volume_pulse2", "mesen_volume_triangle",
+	"mesen_volume_noise", "mesen_volume_dmc", "mesen_volume_fds",
+	"mesen_volume_mmc5", "mesen_volume_n163", "mesen_volume_s5b",
+	"mesen_volume_vrc6", "mesen_volume_vrc7"
+};
+static constexpr const char* MesenChannelPanningKeys[11] = {
+	"mesen_pan_pulse1", "mesen_pan_pulse2", "mesen_pan_triangle",
+	"mesen_pan_noise", "mesen_pan_dmc", "mesen_pan_fds",
+	"mesen_pan_mmc5", "mesen_pan_n163", "mesen_pan_s5b",
+	"mesen_pan_vrc6", "mesen_pan_vrc7"
+};
+
+static constexpr const char* MesenSpritesEnabled = "mesen_sprites_enabled";
+static constexpr const char* MesenBackgroundEnabled = "mesen_background_enabled";
+static constexpr const char* MesenForceBackgroundFirstColumn = "mesen_force_background_first_column";
+static constexpr const char* MesenForceSpritesFirstColumn = "mesen_force_sprites_first_column";
+static constexpr const char* MesenGameGenieBusConflicts = "mesen_game_genie_bus_conflicts";
+static constexpr const char* MesenInputScanline = "mesen_input_scanline";
+static constexpr const char* MesenPpuResetBehavior = "mesen_ppu_reset_behavior";
+static constexpr const char* MesenOamDecay = "mesen_oam_decay";
+static constexpr const char* MesenOamRowCorruption = "mesen_oam_row_corruption";
+static constexpr const char* MesenSpriteEvaluationBug = "mesen_sprite_evaluation_bug";
+static constexpr const char* MesenOamAddressBug = "mesen_oam_address_bug";
+static constexpr const char* MesenPaletteReads = "mesen_palette_reads";
+static constexpr const char* MesenPpu2004Reads = "mesen_ppu_2004_reads";
+static constexpr const char* MesenPpu2000ScrollGlitch = "mesen_ppu_2000_scroll_glitch";
+static constexpr const char* MesenPpu2006ScrollGlitch = "mesen_ppu_2006_scroll_glitch";
+static constexpr const char* MesenRestrictPpuFirstFrame = "mesen_restrict_ppu_first_frame";
+static constexpr const char* MesenDmcSampleDuplicationGlitch = "mesen_dmc_sample_duplication_glitch";
+static constexpr const char* MesenRandomizeMapperPowerOnState = "mesen_randomize_mapper_power_on_state";
+static constexpr const char* MesenRandomizeCpuPpuAlignment = "mesen_randomize_cpu_ppu_alignment";
 
 uint32_t defaultPalette[0x40] { 0xFF666666, 0xFF002A88, 0xFF1412A7, 0xFF3B00A4, 0xFF5C007E, 0xFF6E0040, 0xFF6C0600, 0xFF561D00, 0xFF333500, 0xFF0B4800, 0xFF005200, 0xFF004F08, 0xFF00404D, 0xFF000000, 0xFF000000, 0xFF000000, 0xFFADADAD, 0xFF155FD9, 0xFF4240FF, 0xFF7527FE, 0xFFA01ACC, 0xFFB71E7B, 0xFFB53120, 0xFF994E00, 0xFF6B6D00, 0xFF388700, 0xFF0C9300, 0xFF008F32, 0xFF007C8D, 0xFF000000, 0xFF000000, 0xFF000000, 0xFFFFFEFF, 0xFF64B0FF, 0xFF9290FF, 0xFFC676FF, 0xFFF36AFF, 0xFFFE6ECC, 0xFFFE8170, 0xFFEA9E22, 0xFFBCBE00, 0xFF88D800, 0xFF5CE430, 0xFF45E082, 0xFF48CDDE, 0xFF4F4F4F, 0xFF000000, 0xFF000000, 0xFFFFFEFF, 0xFFC0DFFF, 0xFFD3D2FF, 0xFFE8C8FF, 0xFFFBC2FF, 0xFFFEC4EA, 0xFFFECCC5, 0xFFF7D8A5, 0xFFE4E594, 0xFFCFEF96, 0xFFBDF4AB, 0xFFB3F3CC, 0xFFB5EBF2, 0xFFB8B8B8, 0xFF000000, 0xFF000000 };
 uint32_t unsaturatedPalette[0x40] { 0xFF6B6B6B, 0xFF001E87, 0xFF1F0B96, 0xFF3B0C87, 0xFF590D61, 0xFF5E0528, 0xFF551100, 0xFF461B00, 0xFF303200, 0xFF0A4800, 0xFF004E00, 0xFF004619, 0xFF003A58, 0xFF000000, 0xFF000000, 0xFF000000, 0xFFB2B2B2, 0xFF1A53D1, 0xFF4835EE, 0xFF7123EC, 0xFF9A1EB7, 0xFFA51E62, 0xFFA52D19, 0xFF874B00, 0xFF676900, 0xFF298400, 0xFF038B00, 0xFF008240, 0xFF007891, 0xFF000000, 0xFF000000, 0xFF000000, 0xFFFFFFFF, 0xFF63ADFD, 0xFF908AFE, 0xFFB977FC, 0xFFE771FE, 0xFFF76FC9, 0xFFF5836A, 0xFFDD9C29, 0xFFBDB807, 0xFF84D107, 0xFF5BDC3B, 0xFF48D77D, 0xFF48CCCE, 0xFF555555, 0xFF000000, 0xFF000000, 0xFFFFFFFF, 0xFFC4E3FE, 0xFFD7D5FE, 0xFFE6CDFE, 0xFFF9CAFE, 0xFFFEC9F0, 0xFFFED1C7, 0xFFF7DCAC, 0xFFE8E89C, 0xFFD1F29D, 0xFFBFF4B1, 0xFFB7F5CD, 0xFFB7F0EE, 0xFFBEBEBE, 0xFF000000, 0xFF000000 };
@@ -493,131 +534,231 @@ extern "C" {
 
 		// Core Options v2: Categories
 		static const retro_core_option_v2_category option_cats[] = {
-			{ "system", "System", "System settings (region, RAM, overclock)" },
-			{ "video", "Video", "Video settings (palette, filters, overscan)" },
-			{ "audio", "Audio", "Audio settings (filters, channels, sample rate)" },
-			{ "input", "Input", "Input controller settings" },
-			{ "enhancements", "Enhancements", "Enhancement options (HD packs, sprite limit)" },
+			{ "system", "System", "Console timing, hardware model, startup state, and FDS behavior." },
+			{ "video", "Video", "NES palette, analog filters, overscan, and PAL border controls." },
+			{ "audio", "Audio", "Stereo effects, compatibility fixes, and per-channel mixing." },
+			{ "input", "Input", "Turbo layout, unusual direction input, Zapper, and microphone controls." },
+			{ "enhancements", "Enhancements", "HD packs, sprite flicker reduction, and optional CPU overclocking." },
+			{ "advanced", "Advanced", "Low-level accuracy and debugging controls. Defaults are recommended." },
 			{ NULL, NULL, NULL }
 		};
 
-		// Core Options v2: Definitions
 		static const retro_core_option_v2_definition option_defs[] = {
-			// System category
-			{ MesenRegion, "System - Region", "Region", "Select NES region", NULL, "system",
-				{{ "Auto", "Auto" }, { "NTSC", "NTSC" }, { "PAL", "PAL" }, { "Dendy", "Dendy" }, { NULL, NULL }},
+			{ MesenRegion, "System - Region", "Region", "Selects console timing. Auto follows the game database; force a region only for hacks or testing.", NULL, "system",
+				{{ "Auto", "Auto (Recommended)" }, { "NTSC", "NTSC" }, { "NTSC-J", "NTSC-J" }, { "PAL", "PAL" }, { "Dendy", "Dendy" }, { NULL, NULL }},
 				"Auto" },
-			{ MesenRamState, "System - RAM Power-On State", "RAM Power-On State", "Default power-on state for RAM", NULL, "system",
-				{{ "All 0s (Default)", "All 0s" }, { "All 1s", "All 1s" }, { "Random Values", "Random" }, { NULL, NULL }},
-				"All 0s (Default)" },
-			{ MesenOverclock, "System - Overclock", "Overclock", "Overclock the NES CPU", NULL, "system",
-				{{ "None", "None" }, { "Low", "Low" }, { "Medium", "Medium" }, { "High", "High" }, { "Very High", "Very High" }, { NULL, NULL }},
-				"None" },
-			{ MesenOverclockType, "System - Overclock Type", "Overclock Type", "When to apply overclock", NULL, "system",
-				{{ "Before NMI (Recommended)", "Before NMI" }, { "After NMI", "After NMI" }, { NULL, NULL }},
-				"Before NMI (Recommended)" },
-			{ MesenFdsAutoSelectDisk, "System - FDS Auto Insert Disk", "FDS Auto Insert", "Automatically insert disks on FDS games", NULL, "system",
-				{{ "disabled", "Off" }, { "enabled", "On" }, { NULL, NULL }},
-				"disabled" },
-			{ MesenFdsFastForwardLoad, "System - FDS Fast Forward On Load", "FDS Fast Forward", "Fast forward while FDS is loading", NULL, "system",
-				{{ "disabled", "Off" }, { "enabled", "On" }, { NULL, NULL }},
-				"disabled" },
-			{ MesenAllowInvalidInput, "System - Allow Invalid Input", "Allow Invalid Input", "Allow invalid input combinations", NULL, "system",
-				{{ "disabled", "Off" }, { "enabled", "On" }, { NULL, NULL }},
-				"disabled" },
-			{ MesenRandomizeMapperPowerOnState, "System - Randomize Mapper Power-On State", "Randomize Mapper Power-On", "Randomize mapper power-on state (for testing)", NULL, "system",
-				{{ "disabled", "Off" }, { "enabled", "On" }, { NULL, NULL }},
-				"disabled" },
-			{ MesenRandomizeCpuPpuAlignment, "System - Randomize CPU/PPU Alignment", "Randomize CPU/PPU Alignment", "Randomize CPU/PPU alignment (for testing)", NULL, "system",
-				{{ "disabled", "Off" }, { "enabled", "On" }, { NULL, NULL }},
-				"disabled" },
-
-			// Video category
-			{ MesenPalette, "Video - Palette", "Palette", "Select color palette", NULL, "video",
-			// TODO:FIXME RAW palette doesn't work
-				{{ "Default", "Default" }, { "Composite Direct (by FirebrandX)", }, { "Nes Classic", "NES Classic" }, { "Nestopia (RGB)", "Nestopia RGB" }, { "Original Hardware (by FirebrandX)", "Original Hardware" }, { "PVM Style (by FirebrandX)", "PVM Style" }, { "Sony CXA2025AS", "Sony CXA2025AS" }, { "Unsaturated v6 (by FirebrandX)", "Unsaturated v6" }, { "YUV v3 (by FirebrandX)", "YUV v3" }, { "Wavebeam (by nakedarthur)", "Wavebeam" }, { "Custom", "Custom" }, /*{ "Raw", "Raw" },*/ { NULL, NULL }},
-				"Default" },	
-			// TODO:FIXME the commented NTSC filters don't work	
-			{ MesenNtscFilter, "Video - NTSC Filter", "NTSC Filter", "NTSC video filter", NULL, "video",
-				{{ "Disabled", "Disabled" }, { "Composite (Blargg)", "Composite (Blargg)" }, /*{ "S-Video (Blargg)", "S-Video (Blargg)" }, { "RGB (Blargg)", "RGB (Blargg)" }, { "Monochrome (Blargg)", "Monochrome (Blargg)" }, { "Bisqwit 2x", "Bisqwit 2x" }, { "Bisqwit 4x", "Bisqwit 4x" }, { "Bisqwit 8x", "Bisqwit 8x" },*/ { NULL, NULL }},
+			{ MesenConsoleModel, "System - Console Model", "Console Model", "Emulates a specific NES or Famicom hardware revision. Auto is best for normal play.", NULL, "system",
+				{{ "Auto", "Auto (Recommended)" }, { "NES Front Loader", "NES Front Loader" }, { "NES Top Loader", "NES Top Loader" }, { "Famicom", "Famicom" }, { "AV Famicom", "AV Famicom" }, { NULL, NULL }},
+				"Auto" },
+			{ MesenGameDatabase, "System - Game Database", "Game Database", "Uses MesenCE compatibility data for mapper and region corrections. Disable only for testing.", NULL, "system",
+				{{ "enabled", "Enabled (Recommended)" }, { "disabled", "Disabled" }, { NULL, NULL }},
+				"enabled" },
+			{ MesenRamState, "System - RAM Power-On State", "RAM Power-On State", "Controls RAM contents after power-on. All 0s gives repeatable behavior; Random is closer to varied hardware startup.", NULL, "system",
+				{{ "All 0s", "All 0s (Recommended)" }, { "All 1s", "All 1s" }, { "Random Values", "Random" }, { NULL, NULL }},
+				"All 0s" },
+			{ MesenFdsAutoLoadDisk, "System - FDS Auto-Load Disk Side", "FDS Auto-Load Disk Side", "Automatically selects the disk side requested by an FDS game.", NULL, "system",
+				{{ "enabled", "Enabled (Recommended)" }, { "disabled", "Disabled" }, { NULL, NULL }},
+				"enabled" },
+			{ MesenFdsAutoSelectDisk, "System - FDS Auto-Insert Disk", "FDS Auto-Insert Disk", "Automatically inserts the FDS disk when the game is ready.", NULL, "system",
+				{{ "enabled", "Enabled (Recommended)" }, { "disabled", "Disabled" }, { NULL, NULL }},
+				"enabled" },
+			{ MesenFdsFastForwardLoad, "System - FDS Fast-Forward Loading", "FDS Fast-Forward Loading", "Speeds through FDS loading pauses and returns to normal speed afterward.", NULL, "system",
+				{{ "enabled", "Enabled (Recommended)" }, { "disabled", "Disabled" }, { NULL, NULL }},
+				"enabled" },
+			{ MesenPalette, "Video - Color Palette", "Color Palette", "Changes NES color reproduction without changing gameplay. Custom loads MesenPalette.pal from the RetroArch system folder.", NULL, "video",
+				{{ "Default", "Default (Recommended)" }, { "Composite Direct (by FirebrandX)", "Composite Direct" }, { "Nes Classic", "NES Classic" }, { "Nestopia (RGB)", "Nestopia RGB" }, { "Original Hardware (by FirebrandX)", "Original Hardware" }, { "PVM Style (by FirebrandX)", "PVM Style" }, { "Sony CXA2025AS", "Sony CXA2025AS" }, { "Unsaturated v6 (by FirebrandX)", "Unsaturated v6" }, { "YUV v3 (by FirebrandX)", "YUV v3" }, { "Wavebeam (by nakedarthur)", "Wavebeam" }, { "Custom", "Custom MesenPalette.pal" }, { NULL, NULL }},
+				"Default" },
+			{ MesenNtscFilter, "Video - NTSC Video Filter", "NTSC Video Filter", "Simulates analog video. Composite is soft and authentic; S-Video and RGB are progressively cleaner.", NULL, "video",
+				{{ "Disabled", "Disabled (Recommended)" }, { "Composite", "Composite" }, { "S-Video", "S-Video" }, { "RGB", "RGB" }, { "Monochrome", "Monochrome" }, { "Bisqwit 2x", "Bisqwit 2x" }, { "Bisqwit 4x", "Bisqwit 4x" }, { "Bisqwit 8x", "Bisqwit 8x" }, { NULL, NULL }},
 				"Disabled" },
-		   // TODO:FIXME overscan cropping and AR options don't work
-/*			{ MesenOverscanLeft, "Video - Overscan Left", "Overscan Left", "Left overscan", NULL, "video",
-				{{ "None", "None" }, { "4px", "4px" }, { "8px", "8px" }, { "12px", "12px" }, { "16px", "16px" }, { NULL, NULL }},
+			{ MesenOverscanLeft, "Video - Crop Left Overscan", "Crop Left Overscan", "Hides pixels along the left edge that may have been outside a CRT visible area.", NULL, "video",
+				{{ "None", "None (Recommended)" }, { "4px", "4 pixels" }, { "8px", "8 pixels" }, { "12px", "12 pixels" }, { "16px", "16 pixels" }, { NULL, NULL }},
 				"None" },
-			{ MesenOverscanRight, "Video - Overscan Right", "Overscan Right", "Right overscan", NULL, "video",
-				{{ "None", "None" }, { "4px", "4px" }, { "8px", "8px" }, { "12px", "12px" }, { "16px", "16px" }, { NULL, NULL }},
+			{ MesenOverscanRight, "Video - Crop Right Overscan", "Crop Right Overscan", "Hides pixels along the right edge that may have been outside a CRT visible area.", NULL, "video",
+				{{ "None", "None (Recommended)" }, { "4px", "4 pixels" }, { "8px", "8 pixels" }, { "12px", "12 pixels" }, { "16px", "16 pixels" }, { NULL, NULL }},
 				"None" },
-			{ MesenOverscanTop, "Video - Overscan Top", "Overscan Top", "Top overscan", NULL, "video",
-				{{ "None", "None" }, { "4px", "4px" }, { "8px", "8px" }, { "12px", "12px" }, { "16px", "16px" }, { NULL, NULL }},
+			{ MesenOverscanTop, "Video - Crop Top Overscan", "Crop Top Overscan", "Hides pixels along the top edge that may have been outside a CRT visible area.", NULL, "video",
+				{{ "None", "None (Recommended)" }, { "4px", "4 pixels" }, { "8px", "8 pixels" }, { "12px", "12 pixels" }, { "16px", "16 pixels" }, { NULL, NULL }},
 				"None" },
-			{ MesenOverscanBottom, "Video - Overscan Bottom", "Overscan Bottom", "Bottom overscan", NULL, "video",
-				{{ "None", "None" }, { "4px", "4px" }, { "8px", "8px" }, { "12px", "12px" }, { "16px", "16px" }, { NULL, NULL }},
+			{ MesenOverscanBottom, "Video - Crop Bottom Overscan", "Crop Bottom Overscan", "Hides pixels along the bottom edge that may have been outside a CRT visible area.", NULL, "video",
+				{{ "None", "None (Recommended)" }, { "4px", "4 pixels" }, { "8px", "8 pixels" }, { "12px", "12 pixels" }, { "16px", "16 pixels" }, { NULL, NULL }},
 				"None" },
-			{ MesenAspectRatio, "Video - Aspect Ratio", "Aspect Ratio", "Display aspect ratio", NULL, "video",
-				{{ "Auto", "Auto" }, { "No Stretching", "No Stretching" }, { "NTSC", "NTSC" }, { "PAL", "PAL" }, { "4:3", "4:3" }, { "4:3 (Preserved)", "4:3 (Preserved)" }, { "16:9", "16:9" }, { "16:9 (Preserved)", "16:9 (Preserved)" }, { NULL, NULL }},
-				"Auto" },
-			{ MesenScreenRotation, "Video - Screen Rotation", "Screen Rotation", "Rotate screen display", NULL, "video",
-				{{ "None", "None" }, { "90 degrees", "90 degrees" }, { "180 degrees", "180 degrees" }, { "270 degrees", "270 degrees" }, { NULL, NULL }},
-				"None" },
-			*/
-			{ MesenEnablePalBorders, "Video - Enable PAL Borders", "PAL Borders", "Show borders in PAL mode", NULL, "video",
-				{{ "disabled", "Off" }, { "enabled", "On" }, { NULL, NULL }},
+			{ MesenEnablePalBorders, "Video - PAL Borders", "PAL Borders", "Shows the additional border area produced by PAL NES hardware.", NULL, "video",
+				{{ "disabled", "Disabled (Recommended)" }, { "enabled", "Enabled" }, { NULL, NULL }},
 				"disabled" },
-
-			// Audio category
-			{ MesenFakeStereo, "Audio - Fake Stereo", "Fake Stereo", "Enable fake stereo effect", NULL, "audio",
-				{{ "disabled", "Off" }, { "enabled", "On" }, { NULL, NULL }},
-				"disabled" },
-			{ MesenMuteTriangleUltrasonic, "Audio - Reduce Triangle Popping", "Reduce Triangle Popping", "Mute Triangle channel ultrasonic frequencies", NULL, "audio",
-				{{ "enabled", "On" }, { "disabled", "Off" }, { NULL, NULL }},
+			{ MesenStereoEffect, "Audio - Stereo Effect", "Stereo Effect", "Creates simulated stereo from original mono audio. Off preserves the original sound.", NULL, "audio",
+				{{ "Off", "Off (Recommended)" }, { "Delay", "Delay" }, { "Panning", "Panning" }, { "Comb Filter", "Comb Filter" }, { NULL, NULL }},
+				"Off" },
+			{ MesenMuteTriangleUltrasonic, "Audio - Reduce Triangle Popping", "Reduce Triangle Popping", "Silences ultrasonic triangle output that can create clicks on modern audio systems.", NULL, "audio",
+				{{ "enabled", "Enabled (Recommended)" }, { "disabled", "Disabled" }, { NULL, NULL }},
 				"enabled" },
-			{ MesenReduceDmcPopping, "Audio - Reduce DMC Popping", "Reduce DMC Popping", "Reduce popping on DMC channel", NULL, "audio",
-				{{ "enabled", "On" }, { "disabled", "Off" }, { NULL, NULL }},
+			{ MesenReduceDmcPopping, "Audio - Reduce DMC Popping", "Reduce DMC Popping", "Reduces clicks when sampled DMC audio starts or stops.", NULL, "audio",
+				{{ "enabled", "Enabled (Recommended)" }, { "disabled", "Disabled" }, { NULL, NULL }},
 				"enabled" },
-			{ MesenSwapDutyCycle, "Audio - Swap Duty Cycles", "Swap Duty Cycles", "Swap Square channel duty cycles", NULL, "audio",
-				{{ "disabled", "Off" }, { "enabled", "On" }, { NULL, NULL }},
+			{ MesenSwapDutyCycle, "Audio - Swap Pulse Duty Cycles", "Swap Pulse Duty Cycles", "Swaps two pulse-wave shapes for unusual software that expects different hardware behavior.", NULL, "audio",
+				{{ "disabled", "Disabled (Recommended)" }, { "enabled", "Enabled" }, { NULL, NULL }},
 				"disabled" },
-			{ MesenDisableNoiseModeFlag, "Audio - Disable Noise Mode Flag", "Disable Noise Mode", "Disable Noise channel mode flag", NULL, "audio",
-				{{ "disabled", "Off" }, { "enabled", "On" }, { NULL, NULL }},
+			{ MesenDisableNoiseModeFlag, "Audio - Noise Mode Behavior", "Noise Mode Behavior", "Accurate honors the NES noise mode flag. Ignore can fix percussion in a few unusual games or hacks.", NULL, "audio",
+				{{ "accurate", "Accurate (Recommended)" }, { "ignore", "Ignore Mode Flag" }, { NULL, NULL }},
+				"accurate" },
+			{ MesenReverseDpcmBitOrder, "Audio - Reverse DPCM Bit Order", "Reverse DPCM Bit Order", "Reverses sampled-audio bit order for unusual software and hardware tests.", NULL, "audio",
+				{{ "disabled", "Disabled (Recommended)" }, { "enabled", "Enabled" }, { NULL, NULL }},
 				"disabled" },
-			{ MesenAudioSampleRate, "Audio - Sample Rate", "Sample Rate", "Audio output sample rate", NULL, "audio",
-				{{ "48000", "48000 Hz" }, { "96000", "96000 Hz" }, { "11025", "11025 Hz" }, { "22050", "22050 Hz" }, { "44100", "44100 Hz" }, { NULL, NULL }},
-				"48000" },
-
-			// Input category
-			{ MesenControllerTurboSpeed, "Input - Controller Turbo Speed", "Turbo Speed", "Turbo button speed", NULL, "input",
-				{{ "Fast", "Fast" }, { "Very Fast", "Very Fast" }, { "Disabled", "Disabled" }, { "Slow", "Slow" }, { "Normal", "Normal" }, { NULL, NULL }},
+			{ MesenChannelVolumeKeys[0], "Audio - Pulse 1 Volume", "Pulse 1 Volume", "Adjusts the Pulse 1 channel level.", NULL, "audio",
+				{{ "0", "0%" }, { "25", "25%" }, { "50", "50%" }, { "75", "75%" }, { "100", "100% (Recommended)" }, { "125", "125%" }, { "150", "150%" }, { "200", "200%" }, { NULL, NULL }},
+				"100" },
+			{ MesenChannelPanningKeys[0], "Audio - Pulse 1 Panning", "Pulse 1 Panning", "Places the Pulse 1 channel in the stereo field.", NULL, "audio",
+				{{ "-100", "Full Left" }, { "-67", "Left" }, { "-33", "Slight Left" }, { "0", "Center (Recommended)" }, { "33", "Slight Right" }, { "67", "Right" }, { "100", "Full Right" }, { NULL, NULL }},
+				"0" },
+			{ MesenChannelVolumeKeys[1], "Audio - Pulse 2 Volume", "Pulse 2 Volume", "Adjusts the Pulse 2 channel level.", NULL, "audio",
+				{{ "0", "0%" }, { "25", "25%" }, { "50", "50%" }, { "75", "75%" }, { "100", "100% (Recommended)" }, { "125", "125%" }, { "150", "150%" }, { "200", "200%" }, { NULL, NULL }},
+				"100" },
+			{ MesenChannelPanningKeys[1], "Audio - Pulse 2 Panning", "Pulse 2 Panning", "Places the Pulse 2 channel in the stereo field.", NULL, "audio",
+				{{ "-100", "Full Left" }, { "-67", "Left" }, { "-33", "Slight Left" }, { "0", "Center (Recommended)" }, { "33", "Slight Right" }, { "67", "Right" }, { "100", "Full Right" }, { NULL, NULL }},
+				"0" },
+			{ MesenChannelVolumeKeys[2], "Audio - Triangle Volume", "Triangle Volume", "Adjusts the Triangle channel level.", NULL, "audio",
+				{{ "0", "0%" }, { "25", "25%" }, { "50", "50%" }, { "75", "75%" }, { "100", "100% (Recommended)" }, { "125", "125%" }, { "150", "150%" }, { "200", "200%" }, { NULL, NULL }},
+				"100" },
+			{ MesenChannelPanningKeys[2], "Audio - Triangle Panning", "Triangle Panning", "Places the Triangle channel in the stereo field.", NULL, "audio",
+				{{ "-100", "Full Left" }, { "-67", "Left" }, { "-33", "Slight Left" }, { "0", "Center (Recommended)" }, { "33", "Slight Right" }, { "67", "Right" }, { "100", "Full Right" }, { NULL, NULL }},
+				"0" },
+			{ MesenChannelVolumeKeys[3], "Audio - Noise Volume", "Noise Volume", "Adjusts the Noise channel level.", NULL, "audio",
+				{{ "0", "0%" }, { "25", "25%" }, { "50", "50%" }, { "75", "75%" }, { "100", "100% (Recommended)" }, { "125", "125%" }, { "150", "150%" }, { "200", "200%" }, { NULL, NULL }},
+				"100" },
+			{ MesenChannelPanningKeys[3], "Audio - Noise Panning", "Noise Panning", "Places the Noise channel in the stereo field.", NULL, "audio",
+				{{ "-100", "Full Left" }, { "-67", "Left" }, { "-33", "Slight Left" }, { "0", "Center (Recommended)" }, { "33", "Slight Right" }, { "67", "Right" }, { "100", "Full Right" }, { NULL, NULL }},
+				"0" },
+			{ MesenChannelVolumeKeys[4], "Audio - DMC Volume", "DMC Volume", "Adjusts the DMC channel level.", NULL, "audio",
+				{{ "0", "0%" }, { "25", "25%" }, { "50", "50%" }, { "75", "75%" }, { "100", "100% (Recommended)" }, { "125", "125%" }, { "150", "150%" }, { "200", "200%" }, { NULL, NULL }},
+				"100" },
+			{ MesenChannelPanningKeys[4], "Audio - DMC Panning", "DMC Panning", "Places the DMC channel in the stereo field.", NULL, "audio",
+				{{ "-100", "Full Left" }, { "-67", "Left" }, { "-33", "Slight Left" }, { "0", "Center (Recommended)" }, { "33", "Slight Right" }, { "67", "Right" }, { "100", "Full Right" }, { NULL, NULL }},
+				"0" },
+			{ MesenChannelVolumeKeys[5], "Audio - FDS Volume", "FDS Volume", "Adjusts the FDS channel level.", NULL, "audio",
+				{{ "0", "0%" }, { "25", "25%" }, { "50", "50%" }, { "75", "75%" }, { "100", "100% (Recommended)" }, { "125", "125%" }, { "150", "150%" }, { "200", "200%" }, { NULL, NULL }},
+				"100" },
+			{ MesenChannelPanningKeys[5], "Audio - FDS Panning", "FDS Panning", "Places the FDS channel in the stereo field.", NULL, "audio",
+				{{ "-100", "Full Left" }, { "-67", "Left" }, { "-33", "Slight Left" }, { "0", "Center (Recommended)" }, { "33", "Slight Right" }, { "67", "Right" }, { "100", "Full Right" }, { NULL, NULL }},
+				"0" },
+			{ MesenChannelVolumeKeys[6], "Audio - MMC5 Volume", "MMC5 Volume", "Adjusts the MMC5 channel level.", NULL, "audio",
+				{{ "0", "0%" }, { "25", "25%" }, { "50", "50%" }, { "75", "75%" }, { "100", "100% (Recommended)" }, { "125", "125%" }, { "150", "150%" }, { "200", "200%" }, { NULL, NULL }},
+				"100" },
+			{ MesenChannelPanningKeys[6], "Audio - MMC5 Panning", "MMC5 Panning", "Places the MMC5 channel in the stereo field.", NULL, "audio",
+				{{ "-100", "Full Left" }, { "-67", "Left" }, { "-33", "Slight Left" }, { "0", "Center (Recommended)" }, { "33", "Slight Right" }, { "67", "Right" }, { "100", "Full Right" }, { NULL, NULL }},
+				"0" },
+			{ MesenChannelVolumeKeys[7], "Audio - Namco 163 Volume", "Namco 163 Volume", "Adjusts the Namco 163 channel level.", NULL, "audio",
+				{{ "0", "0%" }, { "25", "25%" }, { "50", "50%" }, { "75", "75%" }, { "100", "100% (Recommended)" }, { "125", "125%" }, { "150", "150%" }, { "200", "200%" }, { NULL, NULL }},
+				"100" },
+			{ MesenChannelPanningKeys[7], "Audio - Namco 163 Panning", "Namco 163 Panning", "Places the Namco 163 channel in the stereo field.", NULL, "audio",
+				{{ "-100", "Full Left" }, { "-67", "Left" }, { "-33", "Slight Left" }, { "0", "Center (Recommended)" }, { "33", "Slight Right" }, { "67", "Right" }, { "100", "Full Right" }, { NULL, NULL }},
+				"0" },
+			{ MesenChannelVolumeKeys[8], "Audio - Sunsoft 5B Volume", "Sunsoft 5B Volume", "Adjusts the Sunsoft 5B channel level.", NULL, "audio",
+				{{ "0", "0%" }, { "25", "25%" }, { "50", "50%" }, { "75", "75%" }, { "100", "100% (Recommended)" }, { "125", "125%" }, { "150", "150%" }, { "200", "200%" }, { NULL, NULL }},
+				"100" },
+			{ MesenChannelPanningKeys[8], "Audio - Sunsoft 5B Panning", "Sunsoft 5B Panning", "Places the Sunsoft 5B channel in the stereo field.", NULL, "audio",
+				{{ "-100", "Full Left" }, { "-67", "Left" }, { "-33", "Slight Left" }, { "0", "Center (Recommended)" }, { "33", "Slight Right" }, { "67", "Right" }, { "100", "Full Right" }, { NULL, NULL }},
+				"0" },
+			{ MesenChannelVolumeKeys[9], "Audio - VRC6 Volume", "VRC6 Volume", "Adjusts the VRC6 channel level.", NULL, "audio",
+				{{ "0", "0%" }, { "25", "25%" }, { "50", "50%" }, { "75", "75%" }, { "100", "100% (Recommended)" }, { "125", "125%" }, { "150", "150%" }, { "200", "200%" }, { NULL, NULL }},
+				"100" },
+			{ MesenChannelPanningKeys[9], "Audio - VRC6 Panning", "VRC6 Panning", "Places the VRC6 channel in the stereo field.", NULL, "audio",
+				{{ "-100", "Full Left" }, { "-67", "Left" }, { "-33", "Slight Left" }, { "0", "Center (Recommended)" }, { "33", "Slight Right" }, { "67", "Right" }, { "100", "Full Right" }, { NULL, NULL }},
+				"0" },
+			{ MesenChannelVolumeKeys[10], "Audio - VRC7 Volume", "VRC7 Volume", "Adjusts the VRC7 channel level.", NULL, "audio",
+				{{ "0", "0%" }, { "25", "25%" }, { "50", "50%" }, { "75", "75%" }, { "100", "100% (Recommended)" }, { "125", "125%" }, { "150", "150%" }, { "200", "200%" }, { NULL, NULL }},
+				"100" },
+			{ MesenChannelPanningKeys[10], "Audio - VRC7 Panning", "VRC7 Panning", "Places the VRC7 channel in the stereo field.", NULL, "audio",
+				{{ "-100", "Full Left" }, { "-67", "Left" }, { "-33", "Slight Left" }, { "0", "Center (Recommended)" }, { "33", "Slight Right" }, { "67", "Right" }, { "100", "Full Right" }, { NULL, NULL }},
+				"0" },
+			{ MesenControllerTurboSpeed, "Input - Turbo Speed", "Turbo Speed", "Sets how quickly Turbo A and Turbo B repeat.", NULL, "input",
+				{{ "Disabled", "Disabled" }, { "Slow", "Slow" }, { "Normal", "Normal (Recommended)" }, { "Fast", "Fast" }, { "Very Fast", "Very Fast" }, { NULL, NULL }},
 				"Normal" },
-			/*
-			{ MesenShiftButtonsClockwise, "Input - Shift Buttons Clockwise", "Shift Buttons", "Shift A/B/X/Y buttons clockwise", NULL, "input",
-				{{ "disabled", "Off" }, { "enabled", "On" }, { NULL, NULL }},
+			{ MesenShiftButtonsClockwise, "Input - Turbo Button Layout", "Turbo Button Layout", "Standard uses X and Y for Turbo A and Turbo B. Clockwise rotates the four face-button assignments.", NULL, "input",
+				{{ "standard", "Standard (Recommended)" }, { "clockwise", "Clockwise" }, { NULL, NULL }},
+				"standard" },
+			{ MesenAllowInvalidInput, "Input - Allow Opposing Directions", "Allow Opposing Directions", "Allows Left+Right or Up+Down simultaneously for glitches and testing.", NULL, "input",
+				{{ "disabled", "Disabled (Recommended)" }, { "enabled", "Enabled" }, { NULL, NULL }},
 				"disabled" },
-			*/
-
-			// Enhancements category (additional options)
-			{ MesenSpritesEnabled, "Enhancements - Sprites Enabled", "Sprites Enabled", "Enable sprite rendering", NULL, "enhancements",
-				{{ "enabled", "On" }, { "disabled", "Off" }, { NULL, NULL }},
+			{ MesenZapperRadius, "Input - Zapper Detection Radius", "Zapper Detection Radius", "Expands the sampled light area. Larger values make aiming more forgiving.", NULL, "input",
+				{{ "0", "Exact" }, { "2", "Small (Recommended)" }, { "4", "Medium" }, { "8", "Large" }, { NULL, NULL }},
+				"2" },
+			{ MesenFamicomMicrophoneButton, "Input - Famicom Microphone Button", "Famicom Microphone Button", "Assigns a controller button to the microphone on the original Famicom second controller.", NULL, "input",
+				{{ "Disabled", "Disabled (Recommended)" }, { "L2", "L2" }, { "R2", "R2" }, { "L3", "L3" }, { "R3", "R3" }, { NULL, NULL }},
+				"Disabled" },
+			{ MesenHdPacks, "Enhancements - HD Packs", "HD Packs", "Loads compatible Mesen HD graphics packs when installed. Has no effect when no pack is present.", NULL, "enhancements",
+				{{ "enabled", "Enabled (Recommended)" }, { "disabled", "Disabled" }, { NULL, NULL }},
 				"enabled" },
-			{ MesenBackgroundEnabled, "Enhancements - Background Enabled", "Background Enabled", "Enable background rendering", NULL, "enhancements",
-				{{ "enabled", "On" }, { "disabled", "Off" }, { NULL, NULL }},
+			{ MesenSpriteLimit, "Enhancements - Sprite Limit", "Sprite Limit", "Original preserves hardware flicker. Adaptive reduces flicker while avoiding most visual errors. Removed always shows every sprite.", NULL, "enhancements",
+				{{ "normal", "Original" }, { "adaptive", "Adaptive (Recommended)" }, { "off", "Removed" }, { NULL, NULL }},
+				"adaptive" },
+			{ MesenOverclock, "Enhancements - CPU Overclock", "CPU Overclock", "Adds extra CPU time to reduce game slowdown. It can change timing or behavior.", NULL, "enhancements",
+				{{ "None", "Off (Recommended)" }, { "Low", "Low" }, { "Medium", "Medium" }, { "High", "High" }, { "Very High", "Very High" }, { NULL, NULL }},
+				"None" },
+			{ MesenOverclockType, "Enhancements - Overclock Timing", "Overclock Timing", "Chooses where extra CPU time is inserted. Before NMI is compatible with more games.", NULL, "enhancements",
+				{{ "Before NMI", "Before NMI (Recommended)" }, { "After NMI", "After NMI" }, { NULL, NULL }},
+				"Before NMI" },
+			{ MesenSpritesEnabled, "Advanced - Sprites", "Sprites", "Disables all sprite rendering for graphics debugging.", NULL, "advanced",
+				{{ "enabled", "Enabled (Recommended)" }, { "disabled", "Disabled" }, { NULL, NULL }},
 				"enabled" },
-			{ MesenDisableGameGenieBusConflicts, "Enhancements - Disable Game Genie Bus Conflicts", "Game Genie Bus Conflicts", "Disable Game Genie bus conflicts", NULL, "enhancements",
-				{{ "disabled", "Off" }, { "enabled", "On" }, { NULL, NULL }},
+			{ MesenBackgroundEnabled, "Advanced - Background", "Background", "Disables all background rendering for graphics debugging.", NULL, "advanced",
+				{{ "enabled", "Enabled (Recommended)" }, { "disabled", "Disabled" }, { NULL, NULL }},
+				"enabled" },
+			{ MesenForceBackgroundFirstColumn, "Advanced - Force Background in Left 8 Pixels", "Force Background in Left 8 Pixels", "Forces background rendering in the normally maskable left edge.", NULL, "advanced",
+				{{ "disabled", "Disabled (Recommended)" }, { "enabled", "Enabled" }, { NULL, NULL }},
 				"disabled" },
-
-			// Enhancements category
-			{ MesenHdPacks, "Enhancements - HD Packs", "HD Packs", "Enable HD graphics packs", NULL, "enhancements",
-				{{ "enabled", "On" }, { "disabled", "Off" }, { NULL, NULL }},
-				"enabled" },
-			{ MesenSpriteLimit, "Enhancements - Sprite Limit", "Sprite Limit", "8-sprite scanline limit", NULL, "enhancements",
-				{{ "normal", "Normal" }, { "adaptive", "Adaptive" }, { "off", "Off" }, { NULL, NULL }},
-				"normal" },
+			{ MesenForceSpritesFirstColumn, "Advanced - Force Sprites in Left 8 Pixels", "Force Sprites in Left 8 Pixels", "Forces sprite rendering in the normally maskable left edge.", NULL, "advanced",
+				{{ "disabled", "Disabled (Recommended)" }, { "enabled", "Enabled" }, { NULL, NULL }},
+				"disabled" },
+			{ MesenGameGenieBusConflicts, "Advanced - Game Genie Bus Conflicts", "Game Genie Bus Conflicts", "Accurate emulates electrical bus conflicts from original Game Genie hardware.", NULL, "advanced",
+				{{ "accurate", "Accurate (Recommended)" }, { "disabled", "Disabled" }, { NULL, NULL }},
+				"accurate" },
+			{ MesenInputScanline, "Advanced - Input Polling Scanline", "Input Polling Scanline", "Chooses when controller input is sampled during a frame. End of Frame is most compatible.", NULL, "advanced",
+				{{ "0", "Start of Frame" }, { "120", "Middle of Frame" }, { "241", "End of Frame (Recommended)" }, { NULL, NULL }},
+				"241" },
+			{ MesenPpuResetBehavior, "Advanced - PPU Reset Behavior", "PPU Reset Behavior", "Accurate preserves the normal PPU reset restriction.", NULL, "advanced",
+				{{ "accurate", "Accurate (Recommended)" }, { "disabled", "Restriction Disabled" }, { NULL, NULL }},
+				"accurate" },
+			{ MesenOamDecay, "Advanced - OAM Decay", "OAM Decay", "Simulates sprite-memory decay found on real hardware.", NULL, "advanced",
+				{{ "disabled", "Disabled (Recommended)" }, { "enabled", "Enabled" }, { NULL, NULL }},
+				"disabled" },
+			{ MesenOamRowCorruption, "Advanced - OAM Row Corruption", "OAM Row Corruption", "Emulates rare corruption of sprite-memory rows.", NULL, "advanced",
+				{{ "disabled", "Disabled (Recommended)" }, { "enabled", "Enabled" }, { NULL, NULL }},
+				"disabled" },
+			{ MesenSpriteEvaluationBug, "Advanced - Sprite Evaluation Bug", "Sprite Evaluation Bug", "Emulates an NES hardware quirk that can alter which sprites appear.", NULL, "advanced",
+				{{ "disabled", "Disabled (Recommended)" }, { "enabled", "Enabled" }, { NULL, NULL }},
+				"disabled" },
+			{ MesenOamAddressBug, "Advanced - OAM Address Bug", "OAM Address Bug", "Accurate emulates the original sprite-memory addressing bug.", NULL, "advanced",
+				{{ "accurate", "Accurate (Recommended)" }, { "disabled", "Disabled" }, { NULL, NULL }},
+				"accurate" },
+			{ MesenPaletteReads, "Advanced - Palette Reads", "Palette Reads", "Accurate allows normal reads from PPU palette memory.", NULL, "advanced",
+				{{ "accurate", "Accurate (Recommended)" }, { "disabled", "Disabled" }, { NULL, NULL }},
+				"accurate" },
+			{ MesenPpu2004Reads, "Advanced - PPU $2004 Reads", "PPU $2004 Reads", "Accurate preserves normal reads from the PPU sprite-data register.", NULL, "advanced",
+				{{ "accurate", "Accurate (Recommended)" }, { "disabled", "Disabled" }, { NULL, NULL }},
+				"accurate" },
+			{ MesenPpu2000ScrollGlitch, "Advanced - PPU $2000 Scroll Glitch", "PPU $2000 Scroll Glitch", "Emulates a rare scrolling glitch caused by writes to $2000.", NULL, "advanced",
+				{{ "disabled", "Disabled (Recommended)" }, { "enabled", "Enabled" }, { NULL, NULL }},
+				"disabled" },
+			{ MesenPpu2006ScrollGlitch, "Advanced - PPU $2006 Scroll Glitch", "PPU $2006 Scroll Glitch", "Emulates a rare scrolling glitch caused by writes to $2006.", NULL, "advanced",
+				{{ "disabled", "Disabled (Recommended)" }, { "enabled", "Enabled" }, { NULL, NULL }},
+				"disabled" },
+			{ MesenRestrictPpuFirstFrame, "Advanced - Restrict PPU Access on First Frame", "Restrict PPU Access on First Frame", "Reproduces first-frame PPU access restrictions seen on hardware.", NULL, "advanced",
+				{{ "disabled", "Disabled (Recommended)" }, { "enabled", "Enabled" }, { NULL, NULL }},
+				"disabled" },
+			{ MesenDmcSampleDuplicationGlitch, "Advanced - DMC Sample Duplication Glitch", "DMC Sample Duplication Glitch", "Emulates a rare duplicated-sample hardware glitch.", NULL, "advanced",
+				{{ "disabled", "Disabled (Recommended)" }, { "enabled", "Enabled" }, { NULL, NULL }},
+				"disabled" },
+			{ MesenRandomizeMapperPowerOnState, "Advanced - Randomize Mapper Power-On State", "Randomize Mapper Power-On State", "Randomizes mapper startup state for hardware testing.", NULL, "advanced",
+				{{ "disabled", "Disabled (Recommended)" }, { "enabled", "Enabled" }, { NULL, NULL }},
+				"disabled" },
+			{ MesenRandomizeCpuPpuAlignment, "Advanced - Randomize CPU/PPU Alignment", "Randomize CPU/PPU Alignment", "Randomizes the initial CPU and PPU clock relationship for testing.", NULL, "advanced",
+				{{ "disabled", "Disabled (Recommended)" }, { "enabled", "Enabled" }, { NULL, NULL }},
+				"disabled" },
 
 			{ NULL, NULL, NULL, NULL, NULL, NULL, {{ NULL, NULL }}, NULL }
 		};
 
-		static retro_core_options_v2 core_opt_info = { 
+		static retro_core_options_v2 core_opt_info = {
 			(retro_core_option_v2_category*)option_cats,
 			(retro_core_option_v2_definition*)option_defs
 		};
@@ -659,7 +800,7 @@ extern "C" {
 			{ "Standard Controller", DEVICE_GAMEPAD },
 			{ NULL, 0 },
 		};
-		
+
 		static constexpr struct retro_controller_description pads5[] = {
 			{ "Auto",     RETRO_DEVICE_JOYPAD },
 			{ "Arkanoid", DEVICE_ARKANOID },
@@ -673,10 +814,10 @@ extern "C" {
 			{ "Konami Hypershot", DEVICE_KONAMIHYPERSHOT },
 			{ "Pachinko", DEVICE_PACHINKO },
 			{ "Partytap", DEVICE_PARTYTAP },
-			{ "Oeka Kids Tablet", DEVICE_OEKAKIDS },			
+			{ "Oeka Kids Tablet", DEVICE_OEKAKIDS },
 			{ NULL, 0 },
 		};
-		
+
 		static constexpr struct retro_controller_info ports[] = {
 			{ pads1, 7 },
 			{ pads2, 7 },
@@ -718,7 +859,7 @@ extern "C" {
 	}
 
 	RETRO_API void retro_set_input_poll(retro_input_poll_t pollInput)
-	{	
+	{
 		// store the callback for later use and forward to key manager if it's active
 		_savedPollInput = pollInput;
 		if(_keyManager) _keyManager->SetPollInput(pollInput);
@@ -842,263 +983,139 @@ void libretro_probe_inputs(const char* tag)
 
 	void update_settings()
 	{
-		struct retro_variable var = { };
+		if(!_emu || !_emu->GetSettings()) return;
+
+		struct retro_variable var = {};
 		NesConfig nesCfg = _emu->GetSettings()->GetNesConfig();
 		VideoConfig videoCfg = _emu->GetSettings()->GetVideoConfig();
 		AudioConfig audioCfg = _emu->GetSettings()->GetAudioConfig();
 
-		// ===== SYSTEM SETTINGS =====
-		
-		// Region
+		auto enabled = [&](const char* key, bool fallback) {
+			retro_variable value = {};
+			return readVariable(key, value) ? string(value.value) == "enabled" : fallback;
+		};
+		auto integerValue = [&](const char* key, int fallback) {
+			retro_variable value = {};
+			return readVariable(key, value) ? atoi(value.value) : fallback;
+		};
+
+		// System
 		if(readVariable(MesenRegion, var)) {
-			string value = string(var.value);
-			if(value == "NTSC") {
-				nesCfg.Region = ConsoleRegion::Ntsc;
-			} else if(value == "PAL") {
-				nesCfg.Region = ConsoleRegion::Pal;
-			} else if(value == "Dendy") {
-				nesCfg.Region = ConsoleRegion::Dendy;
-			} else {
-				nesCfg.Region = ConsoleRegion::Auto;
-			}
+			string value = var.value;
+			if(value == "NTSC") nesCfg.Region = ConsoleRegion::Ntsc;
+			else if(value == "NTSC-J") nesCfg.Region = ConsoleRegion::NtscJapan;
+			else if(value == "PAL") nesCfg.Region = ConsoleRegion::Pal;
+			else if(value == "Dendy") nesCfg.Region = ConsoleRegion::Dendy;
+			else nesCfg.Region = ConsoleRegion::Auto;
 		}
-
-		// RAM Power-On State
+		if(readVariable(MesenConsoleModel, var)) {
+			string value = var.value;
+			if(value == "NES Top Loader") nesCfg.ConsoleType = NesConsoleType::Nes101;
+			else if(value == "Famicom") nesCfg.ConsoleType = NesConsoleType::Hvc001;
+			else if(value == "AV Famicom") nesCfg.ConsoleType = NesConsoleType::Hvc101;
+			else nesCfg.ConsoleType = NesConsoleType::Nes001;
+		}
+		nesCfg.DisableGameDatabase = !enabled(MesenGameDatabase, true);
 		if(readVariable(MesenRamState, var)) {
-			string value = string(var.value);
-			if(value == "All 1s") {
-				nesCfg.RamPowerOnState = RamState::AllOnes;
-			} else if(value == "Random Values") {
-				nesCfg.RamPowerOnState = RamState::Random;
-			} else {
-				nesCfg.RamPowerOnState = RamState::AllZeros;
-			}
+			string value = var.value;
+			if(value == "All 1s") nesCfg.RamPowerOnState = RamState::AllOnes;
+			else if(value == "Random Values") nesCfg.RamPowerOnState = RamState::Random;
+			else nesCfg.RamPowerOnState = RamState::AllZeros;
 		}
+		nesCfg.FdsAutoLoadDisk = enabled(MesenFdsAutoLoadDisk, true);
+		nesCfg.FdsAutoInsertDisk = enabled(MesenFdsAutoSelectDisk, true);
+		nesCfg.FdsFastForwardOnLoad = enabled(MesenFdsFastForwardLoad, true);
 
-		// Overclock
-		int lineCountBefore = 0;
-		int lineCountAfter = 0;
-		bool beforeNmi = true;
-		if(readVariable(MesenOverclockType, var)) {
-			string value = string(var.value);
-			beforeNmi = (value != "After NMI");
-		}
-
-		if(readVariable(MesenOverclock, var)) {
-			string value = string(var.value);
-			int lineCount = 0;
-			if(value == "Low") {
-				lineCount = 100;
-			} else if(value == "Medium") {
-				lineCount = 250;
-			} else if(value == "High") {
-				lineCount = 500;
-			} else if(value == "Very High") {
-				lineCount = 1000;
-			}
-			if(beforeNmi) {
-				lineCountBefore = lineCount;
-			} else {
-				lineCountAfter = lineCount;
-			}
-		}
-		nesCfg.PpuExtraScanlinesBeforeNmi = lineCountBefore;
-		nesCfg.PpuExtraScanlinesAfterNmi = lineCountAfter;
-
-		// FDS options
-		if(readVariable(MesenFdsAutoSelectDisk, var)) {
-			nesCfg.FdsAutoInsertDisk = (string(var.value) == "enabled");
-		}
-		if(readVariable(MesenFdsFastForwardLoad, var)) {
-			nesCfg.FdsFastForwardOnLoad = (string(var.value) == "enabled");
-		}
-
-		// ===== VIDEO SETTINGS =====
-		
 		// Palette
 		if(readVariable(MesenPalette, var)) {
-			string value = string(var.value);
-			if(value == "Default") {
-				_userRgbPalette.assign(std::begin(defaultPalette), std::end(defaultPalette));
-			} else if(value == "Composite Direct (by FirebrandX)") {
-				_userRgbPalette.assign(std::begin(compositeDirectPalette), std::end(compositeDirectPalette));
-			} else if(value == "Nes Classic") {
-				_userRgbPalette.assign(std::begin(nesClassicPalette), std::end(nesClassicPalette));
-			} else if(value == "Nestopia (RGB)") {
-				_userRgbPalette.assign(std::begin(nestopiaRgbPalette), std::end(nestopiaRgbPalette));
-			} else if(value == "Original Hardware (by FirebrandX)") {
-				_userRgbPalette.assign(std::begin(originalHardwarePalette), std::end(originalHardwarePalette));
-			} else if(value == "PVM Style (by FirebrandX)") {
-				_userRgbPalette.assign(std::begin(pvmStylePalette), std::end(pvmStylePalette));
-			} else if(value == "Sony CXA2025AS") {
-				_userRgbPalette.assign(std::begin(sonyCxa2025AsPalette), std::end(sonyCxa2025AsPalette));
-			} else if(value == "Unsaturated v6 (by FirebrandX)") {
-				_userRgbPalette.assign(std::begin(unsaturatedPalette), std::end(unsaturatedPalette));
-			} else if(value == "YUV v3 (by FirebrandX)") {
-				_userRgbPalette.assign(std::begin(yuvPalette), std::end(yuvPalette));
-			} else if(value == "Wavebeam (by nakedarthur)") {
-				_userRgbPalette.assign(std::begin(wavebeamPalette), std::end(wavebeamPalette));
-			} else if(value == "Custom") {
-				load_custom_palette();
-			} else if(value == "Raw") {
-				_videoFilterRaw = true;
-				// For raw mode, use the default palette
-				_userRgbPalette.assign(std::begin(defaultPalette), std::end(defaultPalette));
-			}
+			string value = var.value;
+			if(value == "Composite Direct (by FirebrandX)") _userRgbPalette.assign(std::begin(compositeDirectPalette), std::end(compositeDirectPalette));
+			else if(value == "Nes Classic") _userRgbPalette.assign(std::begin(nesClassicPalette), std::end(nesClassicPalette));
+			else if(value == "Nestopia (RGB)") _userRgbPalette.assign(std::begin(nestopiaRgbPalette), std::end(nestopiaRgbPalette));
+			else if(value == "Original Hardware (by FirebrandX)") _userRgbPalette.assign(std::begin(originalHardwarePalette), std::end(originalHardwarePalette));
+			else if(value == "PVM Style (by FirebrandX)") _userRgbPalette.assign(std::begin(pvmStylePalette), std::end(pvmStylePalette));
+			else if(value == "Sony CXA2025AS") _userRgbPalette.assign(std::begin(sonyCxa2025AsPalette), std::end(sonyCxa2025AsPalette));
+			else if(value == "Unsaturated v6 (by FirebrandX)") _userRgbPalette.assign(std::begin(unsaturatedPalette), std::end(unsaturatedPalette));
+			else if(value == "YUV v3 (by FirebrandX)") _userRgbPalette.assign(std::begin(yuvPalette), std::end(yuvPalette));
+			else if(value == "Wavebeam (by nakedarthur)") _userRgbPalette.assign(std::begin(wavebeamPalette), std::end(wavebeamPalette));
+			else if(value == "Custom") load_custom_palette();
+			else _userRgbPalette.assign(std::begin(defaultPalette), std::end(defaultPalette));
 		}
-
-		// Copy palette into NesConfig
 		if(_userRgbPalette.size() >= 512) {
-			for(size_t i = 0; i < 512; ++i) nesCfg.UserPalette[i] = (i < _userRgbPalette.size()) ? _userRgbPalette[i] : 0xFF000000;
+			for(size_t i = 0; i < 512; i++) nesCfg.UserPalette[i] = _userRgbPalette[i];
 			nesCfg.IsFullColorPalette = true;
 		} else {
-			for(size_t i = 0; i < 64; ++i) nesCfg.UserPalette[i] = (i < _userRgbPalette.size()) ? _userRgbPalette[i] : 0xFF000000;
+			for(size_t i = 0; i < 64; i++) nesCfg.UserPalette[i] = i < _userRgbPalette.size() ? _userRgbPalette[i] : 0xFF000000;
 			nesCfg.IsFullColorPalette = false;
 		}
 
-		
-		// NTSC Filter - map string selection to VideoFilterType enum and apply settings
+		// Video filters and overscan
+		videoCfg.VideoFilter = VideoFilterType::None;
+		videoCfg.NtscArtifacts = 0;
+		videoCfg.NtscBleed = 0;
+		videoCfg.NtscFringing = 0;
+		videoCfg.Saturation = 0;
 		if(readVariable(MesenNtscFilter, var)) {
-			string filterValue = string(var.value);
-			if(filterValue == "Disabled") {
-				videoCfg.VideoFilter = VideoFilterType::None;
-			} else if(filterValue == "Composite (Blargg)") {
-				videoCfg.VideoFilter = VideoFilterType::NtscBlargg;
-
-			}/* else if(filterValue == "S-Video (Blargg)") {
-				videoCfg.VideoFilter = VideoFilterType::NtscBlargg;
-				videoCfg.NtscBlarggPreset_Value = NtscBlarggPreset::Svideo;
-			} else if(filterValue == "RGB (Blargg)") {
-				videoCfg.VideoFilter = VideoFilterType::NtscBlargg;
-				videoCfg.NtscBlarggPreset_Value = NtscBlarggPreset::Rgb;
-			} else if(filterValue == "Monochrome (Blargg)") {
-				videoCfg.VideoFilter = VideoFilterType::NtscBlargg;
-				videoCfg.NtscBlarggPreset_Value = NtscBlarggPreset::Monochrome;
-			} else if(filterValue == "Bisqwit 2x") {
-				videoCfg.VideoFilter = VideoFilterType::NtscBisqwit;
-				videoCfg.NtscScale = NtscBisqwitFilterScale::_2x;
-			} else if(filterValue == "Bisqwit 4x") {
-				videoCfg.VideoFilter = VideoFilterType::NtscBisqwit;
-				videoCfg.NtscScale = NtscBisqwitFilterScale::_4x;
-			} else if(filterValue == "Bisqwit 8x") {
-				videoCfg.VideoFilter = VideoFilterType::NtscBisqwit;
-				videoCfg.NtscScale = NtscBisqwitFilterScale::_8x;
-			}*/
+			string value = var.value;
+			if(value == "Composite") videoCfg.VideoFilter = VideoFilterType::NtscBlargg;
+			else if(value == "S-Video") { videoCfg.VideoFilter = VideoFilterType::NtscBlargg; videoCfg.NtscArtifacts = -1; videoCfg.NtscFringing = -1; }
+			else if(value == "RGB") { videoCfg.VideoFilter = VideoFilterType::NtscBlargg; videoCfg.NtscArtifacts = -1; videoCfg.NtscFringing = -1; videoCfg.NtscBleed = -1; }
+			else if(value == "Monochrome") { videoCfg.VideoFilter = VideoFilterType::NtscBlargg; videoCfg.Saturation = -1; videoCfg.NtscArtifacts = -1; videoCfg.NtscFringing = -1; }
+			else if(value == "Bisqwit 2x") { videoCfg.VideoFilter = VideoFilterType::NtscBisqwit; videoCfg.NtscScale = NtscBisqwitFilterScale::_2x; }
+			else if(value == "Bisqwit 4x") { videoCfg.VideoFilter = VideoFilterType::NtscBisqwit; videoCfg.NtscScale = NtscBisqwitFilterScale::_4x; }
+			else if(value == "Bisqwit 8x") { videoCfg.VideoFilter = VideoFilterType::NtscBisqwit; videoCfg.NtscScale = NtscBisqwitFilterScale::_8x; }
 		}
-/*
-		// Overscan
 		nesCfg.NtscOverscan.Left = readOverscanValue(MesenOverscanLeft);
 		nesCfg.NtscOverscan.Right = readOverscanValue(MesenOverscanRight);
 		nesCfg.NtscOverscan.Top = readOverscanValue(MesenOverscanTop);
 		nesCfg.NtscOverscan.Bottom = readOverscanValue(MesenOverscanBottom);
-		// Use same overscan for PAL
 		nesCfg.PalOverscan = nesCfg.NtscOverscan;
+		nesCfg.EnablePalBorders = enabled(MesenEnablePalBorders, false);
 
-		// Aspect Ratio
-		if(readVariable(MesenAspectRatio, var)) {
-			_selectedAspectRatio = std::string(var.value ? var.value : "");
+		// Audio
+		nesCfg.StereoFilter = StereoFilterType::None;
+		if(readVariable(MesenStereoEffect, var)) {
+			string value = var.value;
+			if(value == "Delay") { nesCfg.StereoFilter = StereoFilterType::Delay; nesCfg.StereoDelay = 20; }
+			else if(value == "Panning") { nesCfg.StereoFilter = StereoFilterType::Panning; nesCfg.StereoPanningAngle = 45; }
+			else if(value == "Comb Filter") { nesCfg.StereoFilter = StereoFilterType::CombFilter; nesCfg.StereoCombFilterDelay = 15; nesCfg.StereoCombFilterStrength = 50; }
 		}
-
-		
-		// Screen Rotation
-		if(readVariable(MesenScreenRotation, var)) {
-			string value = string(var.value);
-			if(value == "90 degrees") {
-				videoCfg.ScreenRotation = 90;
-			} else if(value == "180 degrees") {
-				videoCfg.ScreenRotation = 180;
-			} else if(value == "270 degrees") {
-				videoCfg.ScreenRotation = 270;
-			} else {
-				videoCfg.ScreenRotation = 0;
-			}
+		nesCfg.SilenceTriangleHighFreq = enabled(MesenMuteTriangleUltrasonic, true);
+		nesCfg.ReduceDmcPopping = enabled(MesenReduceDmcPopping, true);
+		nesCfg.SwapDutyCycles = enabled(MesenSwapDutyCycle, false);
+		if(readVariable(MesenDisableNoiseModeFlag, var)) nesCfg.DisableNoiseModeFlag = string(var.value) == "ignore";
+		nesCfg.ReverseDpcmBitOrder = enabled(MesenReverseDpcmBitOrder, false);
+		for(size_t i = 0; i < 11; i++) {
+			nesCfg.ChannelVolumes[i] = (uint32_t)std::max(0, std::min(200, integerValue(MesenChannelVolumeKeys[i], 100)));
+			nesCfg.ChannelPanning[i] = (uint32_t)(int32_t)std::max(-100, std::min(100, integerValue(MesenChannelPanningKeys[i], 0)));
 		}
-*/
+		audioCfg.SampleRate = 48000;
 
-		// PAL Borders
-		if(readVariable(MesenEnablePalBorders, var)) {
-			nesCfg.EnablePalBorders = (string(var.value) == "enabled");
-		}
-
-		// ===== AUDIO SETTINGS =====
-		
-		// Fake Stereo
-		if(readVariable(MesenFakeStereo, var)) {
-			nesCfg.StereoFilter = (string(var.value) == "enabled") ? StereoFilterType::Delay : StereoFilterType::None;
-		}
-
-		// Reduce Triangle Popping
-		if(readVariable(MesenMuteTriangleUltrasonic, var)) {
-			nesCfg.SilenceTriangleHighFreq = (string(var.value) == "enabled");
-		}
-
-		// Reduce DMC Popping
-		if(readVariable(MesenReduceDmcPopping, var)) {
-			nesCfg.ReduceDmcPopping = (string(var.value) == "enabled");
-		}
-
-		// Swap Duty Cycles
-		if(readVariable(MesenSwapDutyCycle, var)) {
-			nesCfg.SwapDutyCycles = (string(var.value) == "enabled");
-		}
-
-		// Disable Noise Mode Flag
-		if(readVariable(MesenDisableNoiseModeFlag, var)) {
-			nesCfg.DisableNoiseModeFlag = (string(var.value) == "enabled");
-		}
-
-		// Audio Sample Rate
-		if(readVariable(MesenAudioSampleRate, var)) {
-			int old_value = audioCfg.SampleRate;
-			audioCfg.SampleRate = atoi(var.value);
-			audioCfg.SampleRate = (audioCfg.SampleRate > 96000) ? 96000 : audioCfg.SampleRate;
-
-			if(old_value != audioCfg.SampleRate) {
-				// If core is running, notify frontend of geometry change
-				if(_saveStateSize != -1) {
-					struct retro_system_av_info system_av_info;
-					retro_get_system_av_info(&system_av_info);
-					env_cb(RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO, &system_av_info);
-				}
-			}
-		}
-
-		// ===== INPUT SETTINGS =====
-		
-		// Controller Turbo Speed
-		int turboSpeed = 1; // default to Normal
+		// Input
+		int turboSpeed = 1;
 		bool turboEnabled = true;
 		if(readVariable(MesenControllerTurboSpeed, var)) {
-			string value = string(var.value);
-			if(value == "Slow") {
-				turboSpeed = 0;
-			} else if(value == "Normal") {
-				turboSpeed = 1;
-			} else if(value == "Fast") {
-				turboSpeed = 2;
-			} else if(value == "Very Fast") {
-				turboSpeed = 3;
-			} else if(value == "Disabled") {
-				turboEnabled = false;
-			}
+			string value = var.value;
+			if(value == "Slow") turboSpeed = 0;
+			else if(value == "Fast") turboSpeed = 2;
+			else if(value == "Very Fast") turboSpeed = 3;
+			else if(value == "Disabled") turboEnabled = false;
 		}
-
-/*
-		// Shift Buttons Clockwise
-		_shiftButtonsClockwise = false;
-		if(readVariable(MesenShiftButtonsClockwise, var)) {
-			_shiftButtonsClockwise = (string(var.value) == "enabled");
+		_shiftButtonsClockwise = readVariable(MesenShiftButtonsClockwise, var) && string(var.value) == "clockwise";
+		nesCfg.AllowInvalidInput = enabled(MesenAllowInvalidInput, false);
+		nesCfg.LightDetectionRadius = (uint32_t)integerValue(MesenZapperRadius, 2);
+		_famicomMicrophoneButton = -1;
+		if(readVariable(MesenFamicomMicrophoneButton, var)) {
+			string value = var.value;
+			if(value == "L2") _famicomMicrophoneButton = RETRO_DEVICE_ID_JOYPAD_L2;
+			else if(value == "R2") _famicomMicrophoneButton = RETRO_DEVICE_ID_JOYPAD_R2;
+			else if(value == "L3") _famicomMicrophoneButton = RETRO_DEVICE_ID_JOYPAD_L3;
+			else if(value == "R3") _famicomMicrophoneButton = RETRO_DEVICE_ID_JOYPAD_R3;
 		}
-*/
-
-		auto getKeyCode = [](int port, int retroKey) {
-			return (port << 8) | (retroKey + 1);
-		};
-
-		auto getKeyBindings = [=](int port) {
+		auto getKeyCode = [](int port, int retroKey) { return (port << 8) | (retroKey + 1); };
+		auto getKeyBindings = [&](int port) {
 			KeyMappingSet keyMappings;
 			keyMappings.TurboSpeed = turboSpeed;
-			// Default NES-style mapping with optional clockwise shift
 			keyMappings.Mapping1.A = getKeyCode(port, _shiftButtonsClockwise ? RETRO_DEVICE_ID_JOYPAD_B : RETRO_DEVICE_ID_JOYPAD_A);
 			keyMappings.Mapping1.B = getKeyCode(port, _shiftButtonsClockwise ? RETRO_DEVICE_ID_JOYPAD_Y : RETRO_DEVICE_ID_JOYPAD_B);
 			if(turboEnabled) {
@@ -1111,97 +1128,68 @@ void libretro_probe_inputs(const char* tag)
 			keyMappings.Mapping1.Down = getKeyCode(port, RETRO_DEVICE_ID_JOYPAD_DOWN);
 			keyMappings.Mapping1.Left = getKeyCode(port, RETRO_DEVICE_ID_JOYPAD_LEFT);
 			keyMappings.Mapping1.Right = getKeyCode(port, RETRO_DEVICE_ID_JOYPAD_RIGHT);
+			if(port == 1 && _famicomMicrophoneButton >= 0) keyMappings.Mapping1.GenericKey1 = getKeyCode(port, _famicomMicrophoneButton);
 			return keyMappings;
 		};
-
 		nesCfg.Port1.Keys = getKeyBindings(0);
 		nesCfg.Port2.Keys = getKeyBindings(1);
-		nesCfg.Port1SubPorts[0].Keys = getKeyBindings(0);
-		nesCfg.Port1SubPorts[1].Keys = getKeyBindings(1);
-		nesCfg.Port1SubPorts[2].Keys = getKeyBindings(2);
-		nesCfg.Port1SubPorts[3].Keys = getKeyBindings(3);
+		for(int i = 0; i < 4; i++) nesCfg.Port1SubPorts[i].Keys = getKeyBindings(i);
 		nesCfg.ExpPort.Keys = getKeyBindings(4);
 
-		// ===== ENHANCEMENTS =====
-		
-		// HD Packs
-	_hdPacksEnabled = true;
-	if(readVariable(MesenHdPacks, var)) {
-		_hdPacksEnabled = (string(var.value) != "disabled");
-	}
-	nesCfg.EnableHdPacks = _hdPacksEnabled;
-
-		// Sprite Limit (3-choice: normal, adaptive, off)
+		// Enhancements
+		_hdPacksEnabled = enabled(MesenHdPacks, true);
+		nesCfg.EnableHdPacks = _hdPacksEnabled;
 		nesCfg.RemoveSpriteLimit = false;
 		nesCfg.AdaptiveSpriteLimit = false;
 		if(readVariable(MesenSpriteLimit, var)) {
-			string value = string(var.value);
-			if(value == "adaptive") {
-				nesCfg.AdaptiveSpriteLimit = true;
-			} else if(value == "off") {
-				nesCfg.RemoveSpriteLimit = true;
-			}
+			string value = var.value;
+			if(value == "adaptive") nesCfg.AdaptiveSpriteLimit = true;
+			else if(value == "off") nesCfg.RemoveSpriteLimit = true;
 		}
-
-		// Sprites Enabled
-		if(readVariable(MesenSpritesEnabled, var)) {
-			nesCfg.SpritesEnabled = (string(var.value) == "enabled");
+		bool beforeNmi = true;
+		if(readVariable(MesenOverclockType, var)) beforeNmi = string(var.value) != "After NMI";
+		int lineCount = 0;
+		if(readVariable(MesenOverclock, var)) {
+			string value = var.value;
+			if(value == "Low") lineCount = 100;
+			else if(value == "Medium") lineCount = 250;
+			else if(value == "High") lineCount = 500;
+			else if(value == "Very High") lineCount = 1000;
 		}
+		nesCfg.PpuExtraScanlinesBeforeNmi = beforeNmi ? lineCount : 0;
+		nesCfg.PpuExtraScanlinesAfterNmi = beforeNmi ? 0 : lineCount;
 
-		// Background Enabled
-		if(readVariable(MesenBackgroundEnabled, var)) {
-			nesCfg.BackgroundEnabled = (string(var.value) == "enabled");
-		}
+		// Advanced
+		nesCfg.SpritesEnabled = enabled(MesenSpritesEnabled, true);
+		nesCfg.BackgroundEnabled = enabled(MesenBackgroundEnabled, true);
+		nesCfg.ForceBackgroundFirstColumn = enabled(MesenForceBackgroundFirstColumn, false);
+		nesCfg.ForceSpritesFirstColumn = enabled(MesenForceSpritesFirstColumn, false);
+		if(readVariable(MesenGameGenieBusConflicts, var)) nesCfg.DisableGameGenieBusConflicts = string(var.value) == "disabled";
+		nesCfg.InputScanline = integerValue(MesenInputScanline, 241);
+		if(readVariable(MesenPpuResetBehavior, var)) nesCfg.DisablePpuReset = string(var.value) == "disabled";
+		nesCfg.EnableOamDecay = enabled(MesenOamDecay, false);
+		nesCfg.EnablePpuOamRowCorruption = enabled(MesenOamRowCorruption, false);
+		nesCfg.EnablePpuSpriteEvalBug = enabled(MesenSpriteEvaluationBug, false);
+		if(readVariable(MesenOamAddressBug, var)) nesCfg.DisableOamAddrBug = string(var.value) == "disabled";
+		if(readVariable(MesenPaletteReads, var)) nesCfg.DisablePaletteRead = string(var.value) == "disabled";
+		if(readVariable(MesenPpu2004Reads, var)) nesCfg.DisablePpu2004Reads = string(var.value) == "disabled";
+		nesCfg.EnablePpu2000ScrollGlitch = enabled(MesenPpu2000ScrollGlitch, false);
+		nesCfg.EnablePpu2006ScrollGlitch = enabled(MesenPpu2006ScrollGlitch, false);
+		nesCfg.RestrictPpuAccessOnFirstFrame = enabled(MesenRestrictPpuFirstFrame, false);
+		nesCfg.EnableDmcSampleDuplicationGlitch = enabled(MesenDmcSampleDuplicationGlitch, false);
+		nesCfg.RandomizeMapperPowerOnState = enabled(MesenRandomizeMapperPowerOnState, false);
+		nesCfg.RandomizeCpuPpuAlignment = enabled(MesenRandomizeCpuPpuAlignment, false);
 
-		// Disable Game Genie Bus Conflicts
-		if(readVariable(MesenDisableGameGenieBusConflicts, var)) {
-			nesCfg.DisableGameGenieBusConflicts = (string(var.value) == "enabled");
-		}
-
-		// ===== SYSTEM OPTIONS =====
-
-		// Allow Invalid Input
-		if(readVariable(MesenAllowInvalidInput, var)) {
-			nesCfg.AllowInvalidInput = (string(var.value) == "enabled");
-		}
-
-		// Randomize Mapper Power-On State
-		if(readVariable(MesenRandomizeMapperPowerOnState, var)) {
-			nesCfg.RandomizeMapperPowerOnState = (string(var.value) == "enabled");
-		}
-
-		// Randomize CPU/PPU Alignment
-		if(readVariable(MesenRandomizeCpuPpuAlignment, var)) {
-			nesCfg.RandomizeCpuPpuAlignment = (string(var.value) == "enabled");
-		}
-
-		// ===== APPLY ALL SETTINGS =====
-		
 		_emu->GetSettings()->SetNesConfig(nesCfg);
 		_emu->GetSettings()->SetVideoConfig(videoCfg);
 		_emu->GetSettings()->SetAudioConfig(audioCfg);
 
-		// Check if geometry-related settings changed
-		bool videoFilterChanged = (_lastVideoConfig.VideoFilter != videoCfg.VideoFilter) ||
-			(_lastVideoConfig.NtscScale != videoCfg.NtscScale) ||
-			(_lastVideoConfig.ScreenRotation != videoCfg.ScreenRotation);
-		bool overscanChanged = (nesCfg.NtscOverscan.Left != _lastNesConfig.NtscOverscan.Left) ||
-			(nesCfg.NtscOverscan.Right != _lastNesConfig.NtscOverscan.Right) ||
-			(nesCfg.NtscOverscan.Top != _lastNesConfig.NtscOverscan.Top) ||
-			(nesCfg.NtscOverscan.Bottom != _lastNesConfig.NtscOverscan.Bottom) ||
-			(nesCfg.PalOverscan.Left != _lastNesConfig.PalOverscan.Left) ||
-			(nesCfg.PalOverscan.Right != _lastNesConfig.PalOverscan.Right) ||
-			(nesCfg.PalOverscan.Top != _lastNesConfig.PalOverscan.Top) ||
-			(nesCfg.PalOverscan.Bottom != _lastNesConfig.PalOverscan.Bottom);
-
+		bool videoFilterChanged = _lastVideoConfig.VideoFilter != videoCfg.VideoFilter || _lastVideoConfig.NtscScale != videoCfg.NtscScale;
+		bool overscanChanged = memcmp(&_lastNesConfig.NtscOverscan, &nesCfg.NtscOverscan, sizeof(OverscanDimensions)) != 0 || memcmp(&_lastNesConfig.PalOverscan, &nesCfg.PalOverscan, sizeof(OverscanDimensions)) != 0;
 		if(videoFilterChanged || overscanChanged) {
 			_geometryDirty = true;
-			if(_emu && _emu->GetVideoDecoder()) {
-				_emu->GetVideoDecoder()->ForceFilterUpdate();
-			}
+			if(_emu->GetVideoDecoder()) _emu->GetVideoDecoder()->ForceFilterUpdate();
 		}
-
-		// Save current settings for next comparison
 		_lastVideoConfig = videoCfg;
 		_lastNesConfig = nesCfg;
 	}
@@ -1406,103 +1394,84 @@ void libretro_probe_inputs(const char* tag)
 		}
 	}
 
-	RETRO_API void retro_cheat_reset()
+	static bool IsHexString(const string& value)
 	{
-		if(_emu) {
-			// Cheat manager API moved; no-op for now.
-		}
+		return !value.empty() && std::all_of(value.begin(), value.end(), [](unsigned char c) { return std::isxdigit(c) != 0; });
 	}
 
-	RETRO_API void retro_cheat_set(unsigned index, bool enabled, const char *codeStr)
+	static bool IsGameGenieString(const string& value)
 	{
-		static const string validGgLetters = "APZLGITYEOXUKSVN";
-		static const string validParLetters = "0123456789ABCDEF";
-		int chl = 0;
+		static const string valid = "APZLGITYEOXUKSVN";
+		return (value.size() == 6 || value.size() == 8) && std::all_of(value.begin(), value.end(), [&](char c) { return valid.find(c) != string::npos; });
+	}
 
-		string code = codeStr;
-		std::transform(code.begin(), code.end(), code.begin(), ::toupper);
-
-		if(code[4] == ':') {
-			for(;;) {
-				string address = code.substr((0 + chl), 4);
-				string value = code.substr((5 + chl), 2);
-				// Cheat API moved — ignore for now
-				if(code[(7 + chl)] != '+') {
-					return;
-				}
-				chl = (chl + 8);
+	static vector<string> SplitLibretroCheatCodes(const string& input)
+	{
+		vector<string> result;
+		string current;
+		for(unsigned char raw : input) {
+			char c = (char)std::toupper(raw);
+			if(c == '+' || c == ';' || c == ',') {
+				if(!current.empty()) { result.push_back(current); current.clear(); }
+			} else if(c != '-' && !std::isspace(raw)) {
+				current.push_back(c);
 			}
 		}
+		if(!current.empty()) result.push_back(current);
+		return result;
+	}
 
-		else if(code[4] == '?' && code[7] == ':') {
-			for(;;) {
-				string address = code.substr((0 + chl), 4);
-				string comparison = code.substr((5 + chl), 2);
-				string value = code.substr((8 + chl), 2);
-            // Cheat API moved; ignore custom cheat add here for now.
-				if(code[(10 + chl)] != '+') {
-					return;
-				}
-				chl = (chl + 11);
+	static bool ConvertLibretroCheatCode(string code, CheatCode& output)
+	{
+		output = {};
+		if(code.size() == 10 && code[4] == '?' && code[7] == ':') {
+			// RetroArch raw compare syntax AAAA?CC:VV -> Mesen AAAA:VV:CC
+			code = code.substr(0, 4) + ":" + code.substr(8, 2) + ":" + code.substr(5, 2);
+		}
+		if((code.size() == 7 && code[4] == ':') || (code.size() == 10 && code[4] == ':' && code[7] == ':')) {
+			string hex = code;
+			hex.erase(std::remove(hex.begin(), hex.end(), ':'), hex.end());
+			if(!IsHexString(hex)) return false;
+			output.Type = CheatType::NesCustom;
+		} else if(IsGameGenieString(code)) {
+			output.Type = CheatType::NesGameGenie;
+		} else if(code.size() == 8 && IsHexString(code)) {
+			output.Type = CheatType::NesProActionRocky;
+		} else {
+			return false;
+		}
+		if(code.size() >= sizeof(output.Code)) return false;
+		std::memcpy(output.Code, code.c_str(), code.size() + 1);
+		return true;
+	}
+
+	static void ApplyLibretroCheats()
+	{
+		if(!_emu || !_emu->GetCheatManager()) return;
+		vector<CheatCode> cheats;
+		for(const LibretroCheatSlot& slot : _libretroCheatSlots) {
+			if(!slot.Enabled) continue;
+			for(const string& code : SplitLibretroCheatCodes(slot.Code)) {
+				CheatCode cheat = {};
+				if(ConvertLibretroCheatCode(code, cheat)) cheats.push_back(cheat);
+				else if(logCallback) logCallback(RETRO_LOG_WARN, "[MesenCE] Ignoring unsupported cheat code: %s\n", code.c_str());
 			}
 		}
+		_emu->GetCheatManager()->SetCheats(cheats);
+	}
 
-		else {
-			//This is either a GG or PAR code
-			bool isValidGgCode = true;
-			bool isValidParCode = true;
+	RETRO_API void retro_cheat_reset()
+	{
+		_libretroCheatSlots.clear();
+		if(_emu && _emu->GetCheatManager()) _emu->GetCheatManager()->ClearCheats(false);
+	}
 
-			for(size_t i = 0; i < 6; i++) {
-				if(validGgLetters.find(code[i]) == string::npos) {
-					isValidGgCode = false;
-				}
-			}
-			for(size_t i = 0; i < 8; i++) {
-				if(validParLetters.find(code[i]) == string::npos) {
-					isValidParCode = false;
-				}
-			}
-
-			if(isValidGgCode && code[6] == '+') {
-				for(;;) {
-					string code1 = code.substr((0 + chl), 6);
-				// Cheat API moved; ignore Game Genie add here for now.
-					if(code[(6 + chl)] != '+') {
-						return;
-					}
-					chl = (chl + 7);
-				}
-			}
-			else if(isValidGgCode && code[8] == '+') {
-				for(;;) {
-					string code1 = code.substr((0 + chl), 8);
-				// Cheat API moved; ignore Game Genie add here for now.
-					if(code[(8 + chl)] != '+') {
-						return;
-					}
-					chl = (chl + 9);
-				}
-			}
-			else if(isValidGgCode) {
-				// Cheat API moved; ignore Game Genie add here for now.
-			}
-
-			else if(isValidParCode && code[8] == '+') {
-				for(;;) {
-					string code1 = code.substr((0 + chl), 8);
-				// Cheat API moved; ignore Pro Action Rocky code add here for now.
-					if(code[(8 + chl)] != '+') {
-						return;
-					}
-					chl = (chl + 9);
-				}
-			}
-			else if(isValidParCode) {
-				// Cheat API moved; ignore Pro Action Rocky code add here for now.
-			}
-
-		}
-
+	RETRO_API void retro_cheat_set(unsigned index, bool enabled, const char* codeStr)
+	{
+		if(index >= _libretroCheatSlots.size()) _libretroCheatSlots.resize(index + 1);
+		_libretroCheatSlots[index].Enabled = enabled;
+		_libretroCheatSlots[index].Code = codeStr ? codeStr : "";
+		ApplyLibretroCheats();
 	}
 
 	void update_input_descriptors()
@@ -1816,7 +1785,7 @@ void libretro_probe_inputs(const char* tag)
 
 		_console->GetSettings()->SetFlagState(EmulationFlags::HasFourScore, hasFourScore);
 */	}
-	
+
 	void retro_set_memory_maps()
 	{
 	PublishRetroAchievementsMemoryMap();
@@ -1990,7 +1959,7 @@ void libretro_probe_inputs(const char* tag)
 				audioCfg.EnableAudio = true;
 				audioCfg.MasterVolume = 100;
 				_emu->GetSettings()->SetAudioConfig(audioCfg);
-				
+
 				NesConfig nesCfg = _emu->GetSettings()->GetNesConfig();
 				// Initialize all channel volumes to 100 (full volume) if they're zero
 				for(size_t i = 0; i < 11; ++i) {
@@ -2021,6 +1990,9 @@ void libretro_probe_inputs(const char* tag)
 			if(_audioDevice && _emu && _emu->GetSoundMixer()) {
 				_emu->GetSoundMixer()->RegisterAudioDevice(_audioDevice.get());
 			}
+
+			// Reapply frontend-managed cheats after content initialization.
+			ApplyLibretroCheats();
 
 			// Update geometry if HD packs are loaded (they may change the resolution)
 			if(_console && _console->GetHdData()) {
@@ -2062,6 +2034,8 @@ void libretro_probe_inputs(const char* tag)
 
 	RETRO_API void retro_unload_game()
 	{
+		if(_emu && _emu->GetCheatManager()) _emu->GetCheatManager()->ClearCheats(false);
+		_libretroCheatSlots.clear();
 		_libretroWasFastForwarding = false;
 		_libretroHasSubmittedFrame = false;
 		if(_audioDevice) {
@@ -2075,13 +2049,13 @@ void libretro_probe_inputs(const char* tag)
 		return model == NesModel::NTSC ? RETRO_REGION_NTSC : RETRO_REGION_PAL;
 	*/
 		// The NesConsole / Emulator APIs were refactored. Return NTSC for now.
-		return RETRO_REGION_NTSC;	
+		return RETRO_REGION_NTSC;
 	}
 
 	RETRO_API void retro_get_system_info(struct retro_system_info *info)
 	{
 		// TODO: Replace with real version string when available
-		static std::string version = "1.0.25";
+		static std::string version = "1.0.26";
 		_mesenVersion = version;
 		//_mesenVersion = EmulationSettings::GetMesenVersionString();
 
