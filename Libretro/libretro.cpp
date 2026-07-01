@@ -77,6 +77,10 @@ static uint64_t _libretroDuplicatedFrames = 0;
 static uint32_t _libretroLastSubmittedFrameNumber = 0;
 static bool _libretroHasSubmittedFrame = false;
 static unsigned _libretroLastThrottleMode = RETRO_THROTTLE_NONE;
+// MESENCE_PERF_V1_0_25
+static bool _libretroWasFastForwarding = false;
+static bool _libretroCanDupe = false;
+static uint64_t _libretroFastForwardExitFences = 0;
 
 static void ConfigureRetroArchFolders()
 {
@@ -170,51 +174,167 @@ static NesConfig _lastNesConfig = {};
 static uint32_t _lastReportedWidth = 256;
 static uint32_t _lastReportedHeight = 240;
 
-// Small audio device implementation that forwards audio from the core's
-// SoundMixer to libretro's audio callback (_audioSampleBatch).
+// MESENCE_PERF_V1_0_25
+// Libretro audio adapter with bounded short-write preservation.
 class LibretroAudioDevice : public IAudioDevice {
 public:
-	LibretroAudioDevice() {
-	}
-	~LibretroAudioDevice() override {
+	LibretroAudioDevice()
+	{
+		_monoBuffer.reserve(4096);
+		_pendingAudio.reserve(MaxPendingFrames * 2);
 	}
 
-	void PlayBuffer(int16_t *soundBuffer, uint32_t bufferSize, uint32_t sampleRate, bool isStereo) override {
-		// bufferSize is number of frames. _audioSampleBatch expects interleaved int16_t samples and frame count.
-		if(!_audioSampleBatch) {
+	~LibretroAudioDevice() override = default;
+
+	void PlayBuffer(int16_t* soundBuffer, uint32_t bufferSize, uint32_t sampleRate, bool isStereo) override
+	{
+		(void)sampleRate;
+		if(!_audioSampleBatch || !soundBuffer || bufferSize == 0) {
 			return;
 		}
 
-		// Choose output buffer pointer (interleaved samples)
-		const int16_t* outPtr = nullptr;
-		if(isStereo) {
-			outPtr = soundBuffer;
-		} else {
-			// Convert mono -> stereo by duplicating samples into a temporary buffer
-			_monoBuffer.resize(bufferSize * 2);
-			for(uint32_t i = 0; i < bufferSize; ++i) {
-				int16_t s = soundBuffer[i];
-				_monoBuffer[i * 2 + 0] = s;
-				_monoBuffer[i * 2 + 1] = s;
+		const int16_t* interleaved = soundBuffer;
+		if(!isStereo) {
+			_monoBuffer.resize((size_t)bufferSize * 2);
+			for(uint32_t i = 0; i < bufferSize; i++) {
+				int16_t sample = soundBuffer[i];
+				_monoBuffer[(size_t)i * 2] = sample;
+				_monoBuffer[(size_t)i * 2 + 1] = sample;
 			}
-			outPtr = _monoBuffer.data();
+			interleaved = _monoBuffer.data();
 		}
 
-		// Forward frames (bufferSize is frame count)
-		_audioSampleBatch((const int16_t*)outPtr, (size_t)bufferSize);
+		CompactPending(false);
+		_pendingAudio.insert(
+			_pendingAudio.end(),
+			interleaved,
+			interleaved + ((size_t)bufferSize * 2)
+		);
+
+		TrimOverflow(MaxPendingFrames);
+		SubmitPending();
 	}
 
-	void Stop() override {}
-	void Pause() override {}
-	void ProcessEndOfFrame() override {}
+	void Stop() override { ClearPending(); }
+	void Pause() override { ClearPending(); }
+	void ProcessEndOfFrame() override { SubmitPending(); }
 
 	string GetAvailableDevices() override { return string(); }
 	void SetAudioDevice(string deviceName) override { (void)deviceName; }
 	AudioStatistics GetStatistics() override { return AudioStatistics(); }
 
+	void ClearPending()
+	{
+		_pendingAudio.clear();
+		_pendingOffsetSamples = 0;
+	}
+
+	void OnFastForwardEnded()
+	{
+		TrimOverflow(ResumePendingFrames);
+		ApplyResumeRamp();
+	}
+
+	size_t GetPendingFrames() const
+	{
+		if(_pendingAudio.size() <= _pendingOffsetSamples) {
+			return 0;
+		}
+		return (_pendingAudio.size() - _pendingOffsetSamples) / 2;
+	}
+
+	uint64_t GetShortWriteCount() const { return _shortWriteCount; }
+	uint64_t GetZeroWriteCount() const { return _zeroWriteCount; }
+	uint64_t GetDroppedFrameCount() const { return _droppedFrames; }
+
 private:
-	// reused buffer for mono->stereo conversion
+	static constexpr size_t MaxPendingFrames = 8192;
+	static constexpr size_t ResumePendingFrames = 1024;
+	static constexpr size_t ResumeRampFrames = 64;
+
 	std::vector<int16_t> _monoBuffer;
+	std::vector<int16_t> _pendingAudio;
+	size_t _pendingOffsetSamples = 0;
+	uint64_t _shortWriteCount = 0;
+	uint64_t _zeroWriteCount = 0;
+	uint64_t _droppedFrames = 0;
+
+	void SubmitPending()
+	{
+		size_t framesAvailable = GetPendingFrames();
+		if(!_audioSampleBatch || framesAvailable == 0) {
+			return;
+		}
+
+		const int16_t* data = _pendingAudio.data() + _pendingOffsetSamples;
+		size_t accepted = _audioSampleBatch(data, framesAvailable);
+		if(accepted > framesAvailable) {
+			accepted = framesAvailable;
+		}
+
+		if(accepted == 0) {
+			_zeroWriteCount++;
+			return;
+		}
+
+		if(accepted < framesAvailable) {
+			_shortWriteCount++;
+		}
+
+		_pendingOffsetSamples += accepted * 2;
+		CompactPending(false);
+	}
+
+	void TrimOverflow(size_t maximumFrames)
+	{
+		size_t pendingFrames = GetPendingFrames();
+		if(pendingFrames <= maximumFrames) {
+			return;
+		}
+
+		size_t framesToDrop = pendingFrames - maximumFrames;
+		_pendingOffsetSamples += framesToDrop * 2;
+		_droppedFrames += framesToDrop;
+		CompactPending(true);
+	}
+
+	void CompactPending(bool force)
+	{
+		if(_pendingOffsetSamples == 0) {
+			return;
+		}
+
+		if(_pendingOffsetSamples >= _pendingAudio.size()) {
+			ClearPending();
+			return;
+		}
+
+		if(force || _pendingOffsetSamples >= 4096) {
+			size_t remainingSamples = _pendingAudio.size() - _pendingOffsetSamples;
+			std::move(
+				_pendingAudio.begin() + (std::vector<int16_t>::difference_type)_pendingOffsetSamples,
+				_pendingAudio.end(),
+				_pendingAudio.begin()
+			);
+			_pendingAudio.resize(remainingSamples);
+			_pendingOffsetSamples = 0;
+		}
+	}
+
+	void ApplyResumeRamp()
+	{
+		size_t pendingFrames = GetPendingFrames();
+		size_t rampFrames = std::min(pendingFrames, ResumeRampFrames);
+		for(size_t i = 0; i < rampFrames; i++) {
+			int32_t numerator = (int32_t)(i + 1);
+			int32_t denominator = (int32_t)rampFrames;
+			size_t sampleIndex = _pendingOffsetSamples + (i * 2);
+			_pendingAudio[sampleIndex] =
+				(int16_t)(((int32_t)_pendingAudio[sampleIndex] * numerator) / denominator);
+			_pendingAudio[sampleIndex + 1] =
+				(int16_t)(((int32_t)_pendingAudio[sampleIndex + 1] * numerator) / denominator);
+		}
+	}
 };
 
 static std::unique_ptr<LibretroAudioDevice> _audioDevice;
@@ -284,6 +404,13 @@ extern "C" {
 			logCallback = log.log;
 		else
 			logCallback = nullptr;
+
+		bool canDupe = false;
+		_libretroCanDupe = env_cb
+			&& env_cb(RETRO_ENVIRONMENT_GET_CAN_DUPE, &canDupe)
+			&& canDupe;
+		_libretroWasFastForwarding = false;
+		_libretroFastForwardExitFences = 0;
 
 		// Create the emulator and initialize its subsystems
 		_emu.reset(new Emulator());
@@ -584,8 +711,10 @@ extern "C" {
 
 	RETRO_API void retro_set_audio_sample_batch(retro_audio_sample_batch_t audioSampleBatch)
 	{
-		// Mixer API changed; keep the libretro callback for later use by audio path
 		_audioSampleBatch = audioSampleBatch;
+		if(_audioDevice) {
+			_audioDevice->ClearPending();
+		}
 	}
 
 	RETRO_API void retro_set_input_poll(retro_input_poll_t pollInput)
@@ -634,9 +763,13 @@ void libretro_probe_inputs(const char* tag)
 
 	RETRO_API void retro_reset()
 	{
+		if(_audioDevice) {
+			_audioDevice->ClearPending();
+		}
+		_libretroWasFastForwarding = false;
 		// Reset signature changed — call parameterless Reset if available
 		_console->Reset();
-	PublishRetroAchievementsMemoryMap();
+		PublishRetroAchievementsMemoryMap();
 	}
 
 	bool readVariable(const char* key, retro_variable &var)
@@ -1078,6 +1211,10 @@ void libretro_probe_inputs(const char* tag)
 
 	bool updated = false;
 	if(env_cb(RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE, &updated) && updated) {
+		// Audio format/channel options may recreate the frontend audio path.
+		if(_audioDevice) {
+			_audioDevice->ClearPending();
+		}
 		update_settings();
 	}
 
@@ -1102,6 +1239,22 @@ void libretro_probe_inputs(const char* tag)
 
 	if(_emu && _emu->GetConsole()) {
 		auto consoleIf = _emu->GetConsole();
+		VideoDecoder* decoder = _emu->GetVideoDecoder();
+
+		// MESENCE_PERF_V1_0_25: Finish the last in-flight fast-forward
+		// conversion before submitting the first normal-speed frame.
+		bool leavingFastForward = _libretroWasFastForwarding && !frontendFastForward;
+		if(leavingFastForward) {
+			if(decoder) {
+				decoder->WaitForAsyncFrameDecode();
+				_libretroFastForwardExitFences++;
+			}
+			if(_audioDevice) {
+				_audioDevice->OnFastForwardEnded();
+			}
+		}
+		_libretroWasFastForwarding = frontendFastForward;
+
 		consoleIf->RunFrame();
 
 		// RetroArch is the sole clock. We still perform MesenCE's non-pacing
@@ -1111,7 +1264,6 @@ void libretro_probe_inputs(const char* tag)
 		}
 		_emu->ProcessEndOfFrame();
 
-		VideoDecoder* decoder = _emu->GetVideoDecoder();
 		VideoRenderer* renderer = _emu->GetVideoRenderer();
 
 		// At normal speed and slow motion, present every decoded frame. During
@@ -1170,7 +1322,16 @@ void libretro_probe_inputs(const char* tag)
 			if(_videoRefresh) {
 				uint32_t width = _lastReportedWidth ? _lastReportedWidth : 256;
 				uint32_t height = _lastReportedHeight ? _lastReportedHeight : 239;
-				_videoRefresh(nullptr, width, height, 0);
+				if(_libretroCanDupe) {
+					_videoRefresh(nullptr, width, height, 0);
+				} else if(validFrame) {
+					_videoRefresh(
+						frame.FrameBuffer,
+						frame.Width,
+						frame.Height,
+						(size_t)frame.Width * sizeof(uint32_t)
+					);
+				}
 			}
 		}
 
@@ -1181,7 +1342,7 @@ void libretro_probe_inputs(const char* tag)
 		)) {
 			logCallback(
 				RETRO_LOG_INFO,
-				"[MesenCE][FrameProbe] run=%llu throttle=%u ff=%d emuFrame=%u decoderFrame=%u decoderRunning=%d videoCb=%d buffer=%p size=%ux%u renderedFrame=%u presented=%llu duplicated=%llu empty=%llu\n",
+				"[MesenCE][FrameProbe] run=%llu throttle=%u ff=%d emuFrame=%u decoderFrame=%u decoderRunning=%d videoCb=%d buffer=%p size=%ux%u renderedFrame=%u presented=%llu duplicated=%llu empty=%llu ffExitFences=%llu audioPending=%llu shortWrites=%llu zeroWrites=%llu audioDropped=%llu\n",
 				(unsigned long long)_libretroRunCounter,
 				(unsigned)(hasThrottleState ? throttleState.mode : RETRO_THROTTLE_NONE),
 				frontendFastForward ? 1 : 0,
@@ -1195,13 +1356,20 @@ void libretro_probe_inputs(const char* tag)
 				(unsigned)frame.FrameNumber,
 				(unsigned long long)_libretroPresentedFrames,
 				(unsigned long long)_libretroDuplicatedFrames,
-				(unsigned long long)_libretroEmptyFrames
+				(unsigned long long)_libretroEmptyFrames,
+				(unsigned long long)_libretroFastForwardExitFences,
+				(unsigned long long)(_audioDevice ? _audioDevice->GetPendingFrames() : 0),
+				(unsigned long long)(_audioDevice ? _audioDevice->GetShortWriteCount() : 0),
+				(unsigned long long)(_audioDevice ? _audioDevice->GetZeroWriteCount() : 0),
+				(unsigned long long)(_audioDevice ? _audioDevice->GetDroppedFrameCount() : 0)
 			);
 		}
 	} else if(_videoRefresh) {
 		_libretroEmptyFrames++;
 		_libretroDuplicatedFrames++;
-		_videoRefresh(nullptr, 256, 239, 0);
+		if(_libretroCanDupe) {
+			_videoRefresh(nullptr, 256, 239, 0);
+		}
 	}
 }
 
@@ -1665,6 +1833,13 @@ void libretro_probe_inputs(const char* tag)
 
 	RETRO_API bool retro_load_game(const struct retro_game_info *game)
 	{
+		_libretroWasFastForwarding = false;
+		_libretroHasSubmittedFrame = false;
+		_libretroLastSubmittedFrameNumber = 0;
+		if(_audioDevice) {
+			_audioDevice->ClearPending();
+		}
+
 		char *saveFolder;
 		char *systemFolder;
 		if(!env_cb(RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY, &systemFolder) || !systemFolder)
@@ -1887,6 +2062,11 @@ void libretro_probe_inputs(const char* tag)
 
 	RETRO_API void retro_unload_game()
 	{
+		_libretroWasFastForwarding = false;
+		_libretroHasSubmittedFrame = false;
+		if(_audioDevice) {
+			_audioDevice->ClearPending();
+		}
 	}
 
 	RETRO_API unsigned retro_get_region()
@@ -1901,8 +2081,8 @@ void libretro_probe_inputs(const char* tag)
 	RETRO_API void retro_get_system_info(struct retro_system_info *info)
 	{
 		// TODO: Replace with real version string when available
-   	static std::string version = "2.0.0";
-   	_mesenVersion = version;
+		static std::string version = "1.0.25";
+		_mesenVersion = version;
 		//_mesenVersion = EmulationSettings::GetMesenVersionString();
 
 		info->library_name = "Mesen2-NES";

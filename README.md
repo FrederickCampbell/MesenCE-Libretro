@@ -7,7 +7,7 @@ This project combines the MesenCE NES/FDS emulation core with a Libretro
 frontend, RetroAchievements-compatible memory exposure, modern Mesen HD-pack
 support, FDS firmware handling, and RetroArch-owned frame pacing.
 
-> **Status:** `v0.1.0` is an early public preview. Windows x64 is the
+> **Status:** `v1.0.25` is the current experimental performance release. Windows x64 is the
 > primary tested target. Keep the stock Mesen core installed alongside this
 > core while testing.
 

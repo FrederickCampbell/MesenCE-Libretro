@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.0.25
+
+- Replaced the universal 15 ms decoded-frame polling delay with immediate event-driven synchronization.
+- Restored full-speed normal gameplay for NES and FDS content with and without HD packs.
+- Added clean fast-forward exit synchronization before the first normal-speed frame.
+- Preserved partially accepted Libretro audio batches in a bounded pending buffer.
+- Trimmed excessive fast-forward audio latency with a short resume ramp.
+- Added frontend capability handling for duplicate video frames.
+- Updated the reported core version to 1.0.25.
+
 ## 0.1.0 - Initial public preview
 
 - Added an NES/FDS Libretro frontend based on the hunterk Mesen2 prototype.

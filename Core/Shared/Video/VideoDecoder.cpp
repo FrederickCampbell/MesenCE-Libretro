@@ -20,8 +20,8 @@
 VideoDecoder::VideoDecoder(Emulator* emu)
 {
 	_emu = emu;
-	_frameChanged = false;
-	_stopFlag = false;
+	_frameChanged.store(false, std::memory_order_relaxed);
+	_stopFlag.store(false, std::memory_order_relaxed);
 	_baseFrameSize = { 256, 239 };
 	_lastFrameSize = _baseFrameSize;
 }
@@ -146,7 +146,10 @@ void VideoDecoder::DecodeFrame(bool forRewind)
 	//Rewind manager will take care of sending the correct frame to the video renderer
 	_emu->GetRewindManager()->SendFrame(convertedFrame, forRewind);
 
-	_frameChanged = false;
+	// MESENCE_PERF_V1_0_25: Publish the completed frame and wake retro_run
+	// immediately instead of making it poll in 15 ms increments.
+	_frameChanged.store(false, std::memory_order_release);
+	_frameDecoded.Signal();
 }
 
 void VideoDecoder::DecodeThread()
@@ -154,9 +157,9 @@ void VideoDecoder::DecodeThread()
 	//This thread will decode the PPU's output (color ID to RGB, intensify r/g/b and produce a HD version of the frame if needed)
 	while(!_stopFlag.load()) {
 		//DecodeFrame returns the final ARGB frame we want to display in the emulator window
-		while(!_frameChanged) {
+		while(!_frameChanged.load(std::memory_order_acquire)) {
 			_waitForFrame.Wait();
-			if(_stopFlag.load()) {
+			if(_stopFlag.load(std::memory_order_acquire)) {
 				return;
 			}
 		}
@@ -172,9 +175,11 @@ uint32_t VideoDecoder::GetFrameCount()
 
 void VideoDecoder::WaitForAsyncFrameDecode()
 {
-	while(_frameChanged) {
-		//Spin until decode is done
-		std::this_thread::sleep_for(std::chrono::duration<int, std::milli>(15));
+	// MESENCE_PERF_V1_0_25: Wait for the exact completion signal.  The event
+	// retains an early signal, so there is no lost-wakeup window between the
+	// atomic check and Wait().
+	while(_frameChanged.load(std::memory_order_acquire)) {
+		_frameDecoded.Wait();
 	}
 }
 
@@ -184,7 +189,7 @@ void VideoDecoder::UpdateFrame(RenderedFrame frame, bool sync, bool forRewind)
 		return;
 	}
 
-	if(_frameChanged) {
+	if(_frameChanged.load(std::memory_order_acquire)) {
 		// MESENCE_LIBRETRO_DROP_BUSY_VIDEO_FRAME
 		// RetroArch owns pacing. During fast-forward, retro_run() intentionally
 		// does not wait for every HD decode. If the decoder is still busy, drop
@@ -198,7 +203,10 @@ void VideoDecoder::UpdateFrame(RenderedFrame frame, bool sync, bool forRewind)
 	if(sync) {
 		DecodeFrame(forRewind);
 	} else {
-		_frameChanged = true;
+		// No decode is in flight here (the busy check above passed), so it is
+		// safe to clear any completion signal left by a fast-forward frame.
+		_frameDecoded.Reset();
+		_frameChanged.store(true, std::memory_order_release);
 		_waitForFrame.Signal();
 	}
 	_frameCount++;
@@ -211,10 +219,11 @@ void VideoDecoder::StartThread()
 		_videoFilter.reset();
 		UpdateVideoFilter();
 		_videoFilter->SetBaseFrameInfo(_baseFrameSize);
-		_stopFlag = false;
-		_frameChanged = false;
+		_stopFlag.store(false, std::memory_order_relaxed);
+		_frameChanged.store(false, std::memory_order_relaxed);
 		_frameCount = 0;
 		_waitForFrame.Reset();
+		_frameDecoded.Reset();
 
 		_emu->GetVideoRenderer()->ClearFrame();
 
@@ -225,7 +234,7 @@ void VideoDecoder::StartThread()
 void VideoDecoder::StopThread()
 {
 	auto lock = _stopStartLock.AcquireSafe();
-	_stopFlag = true;
+	_stopFlag.store(true, std::memory_order_release);
 	if(_decodeThread) {
 		_waitForFrame.Signal();
 		_decodeThread->join();

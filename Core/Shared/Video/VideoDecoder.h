@@ -23,6 +23,8 @@ private:
 
 	SimpleLock _stopStartLock;
 	AutoResetEvent _waitForFrame;
+	// MESENCE_PERF_V1_0_25: Completion event for immediate Libretro wake-up.
+	AutoResetEvent _frameDecoded;
 
 	atomic<bool> _frameChanged;
 	atomic<bool> _stopFlag;
