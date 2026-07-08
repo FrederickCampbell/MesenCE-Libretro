@@ -9,6 +9,12 @@
 HdVideoFilter::HdVideoFilter(NesConsole* console, Emulator* emu, HdPackData* hdData) : BaseVideoFilter(emu)
 {
 	_hdData = hdData;
+
+	// Prepare HD pack resources before the renderer starts processing frames.
+	// This preserves visual output while avoiding first-use stalls during gameplay.
+	if(_hdData) {
+		_hdData->PreloadResources();
+	}
 	switch(hdData->Scale) {
 		case 1: _hdNesPack.reset(new HdNesPack<1>(console, emu->GetSettings(), hdData)); break;
 		case 2: _hdNesPack.reset(new HdNesPack<2>(console, emu->GetSettings(), hdData)); break;

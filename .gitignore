@@ -81,3 +81,20 @@ SHA256SUMS.txt
 /LAUNCH_MESENCE_TEST.ps1
 /CREATE_PRIVACY_SAFE_MESENCE_REPO*.ps1
 # Local content, firmware, and HD packs
+
+# MesenCE local patch/build cleanup
+*.bak
+*.bak_*
+*.orig
+*.rej
+*~
+*.tmp
+*.patch.tmp
+*.o
+*.obj
+*.d
+*.pdb
+*.ilk
+*.exp
+*.map
+cleanup_manifest_*.txt

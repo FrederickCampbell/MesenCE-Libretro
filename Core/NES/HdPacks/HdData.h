@@ -263,6 +263,7 @@ struct HdPackTileInfo : public HdTileKey
 {
 private:
 	bool _needInit = true;
+	SimpleLock _initLock;
 
 public:
 	uint32_t X;
@@ -339,13 +340,27 @@ public:
 
 	__noinline void Init()
 	{
+		// Tile pixel data can be initialized up-front when an HD pack is loaded.
+		// Keep this idempotent so first-use fallback paths remain safe.
+		if(!_needInit) {
+			return;
+		}
+
+		auto lock = _initLock.AcquireSafe();
+
+		if(!_needInit) {
+			return;
+		}
+
 		_needInit = false;
+
 		Bitmap->Init();
 
 		uint32_t bitmapOffset = Y * Bitmap->Width + X;
 		uint32_t* pngData = Bitmap->PixelData.data();
 
 		HdTileData.resize(Width * Height);
+
 		if(Bitmap->PixelData.size() >= bitmapOffset + ((Height - 1) * Bitmap->Width) + Width) {
 			for(uint32_t y = 0; y < Height; y++) {
 				memcpy(HdTileData.data() + (y * Width), pngData + bitmapOffset, Width * sizeof(uint32_t));
@@ -494,18 +509,57 @@ public:
 
 	void LoadAsync()
 	{
+		PreloadResources();
+	}
+
+	void PreloadResources()
+	{
+		// Decode image data and extract tile pixels before gameplay frames are rendered.
+		// This avoids first-use stalls when HD pack resources are encountered.
+		Timer tmr;
+		uint32_t backgroundBitmapCount = 0;
+		uint32_t imageBitmapCount = 0;
+		uint32_t tileCount = 0;
+
 		for(auto& bitmap : BackgroundFileData) {
-			bitmap->Init();
+			if(bitmap) {
+				bitmap->Init();
+				backgroundBitmapCount++;
+			}
+
 			if(_cancelLoad) {
 				return;
 			}
 		}
+
 		for(auto& bitmap : ImageFileData) {
-			bitmap->Init();
+			if(bitmap) {
+				bitmap->Init();
+				imageBitmapCount++;
+			}
+
 			if(_cancelLoad) {
 				return;
 			}
 		}
+
+		for(auto& tile : Tiles) {
+			if(tile && tile->NeedInit()) {
+				tile->Init();
+				tileCount++;
+			}
+
+			if(_cancelLoad) {
+				return;
+			}
+		}
+
+		MessageManager::Log(
+			"[HDPack] Preloaded resources: backgrounds=" + std::to_string(backgroundBitmapCount) +
+			" images=" + std::to_string(imageBitmapCount) +
+			" tiles=" + std::to_string(tileCount) +
+			" elapsedMs=" + std::to_string(tmr.GetElapsedMS())
+		);
 	}
 
 	void CancelLoad()
