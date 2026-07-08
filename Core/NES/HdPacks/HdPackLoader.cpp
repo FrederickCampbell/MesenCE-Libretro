@@ -18,6 +18,497 @@
 #define checkConstraint(x, y) if(!(x)) { logError(y); return; }
 #define checkConstraintEx(x, y) if(_data->Version >= 109) { checkConstraint(x, y); } else { if(!(x)) { logError(y); } }
 
+
+namespace
+{
+	struct HdSemanticRouteEntry
+	{
+		string Conditions;
+		string Page;
+	};
+
+	struct HdSemanticRouteInfo
+	{
+		vector<HdSemanticRouteEntry> Entries;
+	};
+	struct HdSemanticContextTemplate
+	{
+		unordered_map<string, string> ByPalette;
+		string DefaultConditions;
+		string PatternConditions;
+	};
+
+	string HdSemanticTrim(const string& value)
+	{
+		size_t start = 0;
+		while(start < value.size() && (value[start] == ' ' || value[start] == '\t' || value[start] == '\r' || value[start] == '\n')) {
+			start++;
+		}
+		size_t end = value.size();
+		while(end > start && (value[end - 1] == ' ' || value[end - 1] == '\t' || value[end - 1] == '\r' || value[end - 1] == '\n')) {
+			end--;
+		}
+		return value.substr(start, end - start);
+	}
+
+	string HdSemanticStripComment(const string& value)
+	{
+		size_t index = value.find('#');
+		if(index == string::npos) {
+			return HdSemanticTrim(value);
+		}
+		return HdSemanticTrim(value.substr(0, index));
+	}
+
+	bool HdSemanticStartsWith(const string& value, const string& prefix)
+	{
+		return value.size() >= prefix.size() && value.substr(0, prefix.size()) == prefix;
+	}
+
+	string HdSemanticRemoveWhitespace(const string& value)
+	{
+		string output;
+		for(char ch : value) {
+			if(ch != ' ' && ch != '\t' && ch != '\r' && ch != '\n') {
+				output.push_back(ch);
+			}
+		}
+		return output;
+	}
+
+	string HdSemanticToLower(string value)
+	{
+		for(char& ch : value) {
+			if(ch >= 'A' && ch <= 'Z') {
+				ch = (char)(ch - 'A' + 'a');
+			}
+		}
+		return value;
+	}
+
+	string HdSemanticReplaceAll(string value, const string& from, const string& to)
+	{
+		if(from.empty()) {
+			return value;
+		}
+
+		size_t pos = 0;
+		while((pos = value.find(from, pos)) != string::npos) {
+			value.replace(pos, from.size(), to);
+			pos += to.size();
+		}
+		return value;
+	}
+
+	vector<string> HdSemanticSplit(const string& value, char delimiter);
+
+	HdSemanticContextTemplate HdSemanticParseContextTemplate(const string& body)
+	{
+		size_t eq = body.find('=');
+		if(eq == string::npos) {
+			throw std::runtime_error("Invalid <contextTemplate> tag");
+		}
+
+		HdSemanticContextTemplate result;
+		string expression = HdSemanticTrim(body.substr(eq + 1));
+
+		if(expression.find(':') == string::npos) {
+			result.PatternConditions = HdSemanticRemoveWhitespace(expression);
+			return result;
+		}
+
+		for(string part : HdSemanticSplit(expression, ';')) {
+			if(part.empty()) {
+				continue;
+			}
+
+			size_t colon = part.find(':');
+			if(colon == string::npos) {
+				throw std::runtime_error("Invalid <contextTemplate> branch: " + part);
+			}
+
+			string key = HdSemanticToLower(HdSemanticTrim(part.substr(0, colon)));
+			string conditions = HdSemanticRemoveWhitespace(part.substr(colon + 1));
+
+			if(key == "default") {
+				result.DefaultConditions = conditions;
+			} else {
+				result.ByPalette[key] = conditions;
+			}
+		}
+
+		return result;
+	}
+	vector<string> HdSemanticSplit(const string& value, char separator)
+	{
+		vector<string> values;
+		string current;
+		for(char ch : value) {
+			if(ch == separator) {
+				values.push_back(HdSemanticTrim(current));
+				current.clear();
+			} else {
+				current.push_back(ch);
+			}
+		}
+		values.push_back(HdSemanticTrim(current));
+		return values;
+	}
+
+	unordered_map<string, string> HdSemanticParseKeyValues(const string& value)
+	{
+		unordered_map<string, string> result;
+		for(string part : HdSemanticSplit(value, ',')) {
+			if(part.empty()) {
+				continue;
+			}
+			size_t eq = part.find('=');
+			if(eq == string::npos) {
+				throw std::runtime_error("Invalid semantic key/value: " + part);
+			}
+			result[HdSemanticTrim(part.substr(0, eq))] = HdSemanticTrim(part.substr(eq + 1));
+		}
+		return result;
+	}
+
+	int HdSemanticAddImage(vector<string>& output, unordered_map<string, int>& imageIndexes, const string& imagePath)
+	{
+		auto existing = imageIndexes.find(imagePath);
+		if(existing != imageIndexes.end()) {
+			return existing->second;
+		}
+		int index = (int)imageIndexes.size();
+		imageIndexes[imagePath] = index;
+		output.push_back("<img>" + imagePath);
+		return index;
+	}
+
+	string HdSemanticJoinConditions(vector<string> parts)
+	{
+		string output;
+		for(string part : parts) {
+			part = HdSemanticRemoveWhitespace(HdSemanticTrim(part));
+			if(part.empty()) {
+				continue;
+			}
+			if(!output.empty()) {
+				output += "&";
+			}
+			output += part;
+		}
+		return output;
+	}
+
+	string HdSemanticParseWatch(const string& body)
+	{
+		size_t eq = body.find('=');
+		if(eq == string::npos) {
+			throw std::runtime_error("Invalid <watch> tag");
+		}
+
+		string name = HdSemanticTrim(body.substr(0, eq));
+		string expr = HdSemanticRemoveWhitespace(body.substr(eq + 1));
+		if(!HdSemanticStartsWith(expr, "mem(")) {
+			throw std::runtime_error("Only mem(ADDR) watches are supported right now: " + name);
+		}
+
+		size_t close = expr.find(')');
+		if(close == string::npos) {
+			throw std::runtime_error("Invalid <watch> memory expression: " + name);
+		}
+
+		string address = expr.substr(4, close - 4);
+		string rest = expr.substr(close + 1);
+		string op;
+		for(string candidate : vector<string>{ "==", "!=", ">=", "<=", ">", "<" }) {
+			if(HdSemanticStartsWith(rest, candidate)) {
+				op = candidate;
+				rest = rest.substr(candidate.size());
+				break;
+			}
+		}
+		if(op.empty()) {
+			throw std::runtime_error("Invalid <watch> operator: " + name);
+		}
+
+		string value = rest;
+		string mask;
+		size_t comma = rest.find(',');
+		if(comma != string::npos) {
+			value = rest.substr(0, comma);
+			mask = rest.substr(comma + 1);
+		}
+
+		string line = "<condition>" + name + ",memoryCheckConstant," + address + "," + op + "," + value;
+		if(!mask.empty()) {
+			line += "," + mask;
+		}
+		return line;
+	}
+
+	HdSemanticRouteInfo HdSemanticParseRoute(const string& body)
+	{
+		HdSemanticRouteInfo route;
+		size_t eq = body.find('=');
+		if(eq == string::npos) {
+			throw std::runtime_error("Invalid <route> tag. Use: <route>name = when cond -> page; default -> page");
+		}
+
+		string expression = body.substr(eq + 1);
+		for(string part : HdSemanticSplit(expression, ';')) {
+			if(part.empty()) {
+				continue;
+			}
+			size_t arrow = part.find("->");
+			if(arrow == string::npos) {
+				throw std::runtime_error("Invalid <route> branch: " + part);
+			}
+
+			string left = HdSemanticTrim(part.substr(0, arrow));
+			string page = HdSemanticTrim(part.substr(arrow + 2));
+			HdSemanticRouteEntry entry;
+			entry.Page = page;
+			if(HdSemanticStartsWith(left, "when ")) {
+				entry.Conditions = HdSemanticRemoveWhitespace(left.substr(5));
+			} else if(left == "default") {
+				entry.Conditions = "";
+			} else {
+				throw std::runtime_error("Invalid <route> branch: " + part);
+			}
+			route.Entries.push_back(entry);
+		}
+		return route;
+	}
+
+	void ApplySemanticHdPackPreprocess(vector<uint8_t>& hdDefinition)
+	{
+		string source((char*)hdDefinition.data(), hdDefinition.size());
+		if(source.find("<page>") == string::npos &&
+			source.find("<watch>") == string::npos &&
+			source.find("<paletteSet>") == string::npos &&
+			source.find("<rect>") == string::npos &&
+			source.find("<context>") == string::npos &&
+			source.find("<contextTemplate>") == string::npos &&
+			source.find("<route>") == string::npos &&
+			source.find("<replace>") == string::npos) {
+			return;
+		}
+
+		vector<string> output;
+		unordered_map<string, int> imageIndexes;
+		unordered_map<string, string> pages;
+		unordered_map<string, vector<string>> paletteSets;
+		unordered_map<string, std::pair<string, string>> rects;
+		unordered_map<string, string> contexts;
+		unordered_map<string, HdSemanticContextTemplate> contextTemplates;
+		unordered_map<string, HdSemanticRouteInfo> routes;
+
+		vector<string> lines;
+		string current;
+		for(char ch : source) {
+			if(ch == '\n') {
+				lines.push_back(current);
+				current.clear();
+			} else {
+				current.push_back(ch);
+			}
+		}
+		if(!current.empty()) {
+			lines.push_back(current);
+		}
+
+		for(string rawLine : lines) {
+			string line = HdSemanticStripComment(rawLine);
+			if(line.empty()) {
+				output.push_back(rawLine);
+				continue;
+			}
+
+			if(HdSemanticStartsWith(line, "<img>")) {
+				string imagePath = HdSemanticTrim(line.substr(5));
+				HdSemanticAddImage(output, imageIndexes, imagePath);
+				continue;
+			}
+
+			if(HdSemanticStartsWith(line, "<page>")) {
+				string body = HdSemanticTrim(line.substr(6));
+				size_t eq = body.find('=');
+				if(eq == string::npos) {
+					throw std::runtime_error("Invalid <page> tag");
+				}
+				string name = HdSemanticTrim(body.substr(0, eq));
+				string path = HdSemanticTrim(body.substr(eq + 1));
+				pages[name] = path;
+				HdSemanticAddImage(output, imageIndexes, path);
+				continue;
+			}
+
+			if(HdSemanticStartsWith(line, "<watch>")) {
+				output.push_back(HdSemanticParseWatch(HdSemanticTrim(line.substr(7))));
+				continue;
+			}
+
+			if(HdSemanticStartsWith(line, "<paletteSet>")) {
+				string body = HdSemanticTrim(line.substr(12));
+				size_t eq = body.find('=');
+				if(eq == string::npos) {
+					throw std::runtime_error("Invalid <paletteSet> tag");
+				}
+				string name = HdSemanticTrim(body.substr(0, eq));
+				paletteSets[name] = HdSemanticSplit(body.substr(eq + 1), ',');
+				continue;
+			}
+
+			if(HdSemanticStartsWith(line, "<rect>")) {
+				string body = HdSemanticTrim(line.substr(6));
+				size_t eq = body.find('=');
+				if(eq == string::npos) {
+					throw std::runtime_error("Invalid <rect> tag");
+				}
+				string name = HdSemanticTrim(body.substr(0, eq));
+				vector<string> values = HdSemanticSplit(body.substr(eq + 1), ',');
+				if(values.size() < 2) {
+					throw std::runtime_error("Invalid <rect> coords: " + name);
+				}
+				rects[name] = std::make_pair(values[0], values[1]);
+				continue;
+			}
+
+			if(HdSemanticStartsWith(line, "<contextTemplate>")) {
+				string body = HdSemanticTrim(line.substr(17));
+				size_t eq = body.find('=');
+				if(eq == string::npos) {
+					throw std::runtime_error("Invalid <contextTemplate> tag");
+				}
+				string name = HdSemanticTrim(body.substr(0, eq));
+				contextTemplates[name] = HdSemanticParseContextTemplate(body);
+				continue;
+			}
+			if(HdSemanticStartsWith(line, "<context>")) {
+				string body = HdSemanticTrim(line.substr(9));
+				size_t eq = body.find('=');
+				if(eq == string::npos) {
+					throw std::runtime_error("Invalid <context> tag");
+				}
+				contexts[HdSemanticTrim(body.substr(0, eq))] = HdSemanticRemoveWhitespace(body.substr(eq + 1));
+				continue;
+			}
+
+			if(HdSemanticStartsWith(line, "<route>")) {
+				string body = HdSemanticTrim(line.substr(7));
+				size_t eq = body.find('=');
+				if(eq == string::npos) {
+					throw std::runtime_error("Invalid <route> tag");
+				}
+				string name = HdSemanticTrim(body.substr(0, eq));
+				routes[name] = HdSemanticParseRoute(body);
+				continue;
+			}
+
+			if(HdSemanticStartsWith(line, "<replace>")) {
+				unordered_map<string, string> values = HdSemanticParseKeyValues(HdSemanticTrim(line.substr(9)));
+				if(!values.count("tile") || !values.count("page") || !values.count("target")) {
+					throw std::runtime_error("<replace> requires tile=, page=, and target=");
+				}
+
+				string targetName = values["target"];
+				if(!rects.count(targetName)) {
+					throw std::runtime_error("Unknown <rect> target: " + targetName);
+				}
+
+				vector<string> palettes;
+				if(values.count("paletteSet")) {
+					string paletteSetName = values["paletteSet"];
+					if(!paletteSets.count(paletteSetName)) {
+						throw std::runtime_error("Unknown <paletteSet>: " + paletteSetName);
+					}
+					palettes = paletteSets[paletteSetName];
+				} else if(values.count("palette")) {
+					palettes.push_back(values["palette"]);
+				} else {
+					throw std::runtime_error("<replace> requires palette= or paletteSet=");
+				}
+
+				vector<HdSemanticRouteEntry> pageEntries;
+				string pageValue = values["page"];
+				if(HdSemanticStartsWith(pageValue, "@")) {
+					string routeName = pageValue.substr(1);
+					if(!routes.count(routeName)) {
+						throw std::runtime_error("Unknown <route>: " + routeName);
+					}
+					pageEntries = routes[routeName].Entries;
+				} else {
+					HdSemanticRouteEntry entry;
+					entry.Page = pageValue;
+					entry.Conditions = "";
+					pageEntries.push_back(entry);
+				}
+
+				string brightness = values.count("brightness") ? values["brightness"] : "1";
+				string defaultTile = values.count("default") ? values["default"] : "N";
+				string baseConditions = values.count("conditions") ? values["conditions"] : "";
+				if(values.count("context")) {
+					string contextName = values["context"];
+					if(!contexts.count(contextName)) {
+						throw std::runtime_error("Unknown <context>: " + contextName);
+					}
+					baseConditions = HdSemanticJoinConditions(vector<string>{ baseConditions, contexts[contextName] });
+				}
+
+				string contextTemplateName;
+				if(values.count("contextTemplate")) {
+					contextTemplateName = values["contextTemplate"];
+					if(!contextTemplates.count(contextTemplateName)) {
+						throw std::runtime_error("Unknown <contextTemplate>: " + contextTemplateName);
+					}
+				}
+
+				for(HdSemanticRouteEntry pageEntry : pageEntries) {
+					if(!pages.count(pageEntry.Page)) {
+						throw std::runtime_error("Unknown <page>: " + pageEntry.Page);
+					}
+					int imageIndex = HdSemanticAddImage(output, imageIndexes, pages[pageEntry.Page]);
+					for(string palette : palettes) {
+						string paletteKey = HdSemanticToLower(HdSemanticTrim(palette));
+						string templateConditions;
+
+						if(!contextTemplateName.empty()) {
+							HdSemanticContextTemplate& contextTemplate = contextTemplates[contextTemplateName];
+
+							if(!contextTemplate.PatternConditions.empty()) {
+								templateConditions = HdSemanticReplaceAll(contextTemplate.PatternConditions, "{PAL}", paletteKey);
+							} else {
+								auto paletteMatch = contextTemplate.ByPalette.find(paletteKey);
+								if(paletteMatch != contextTemplate.ByPalette.end()) {
+									templateConditions = paletteMatch->second;
+								} else {
+									templateConditions = contextTemplate.DefaultConditions;
+								}
+							}
+						}
+
+						string conditions = HdSemanticJoinConditions(vector<string>{ baseConditions, templateConditions, pageEntry.Conditions });
+						string tileLine = "<tile>" + std::to_string(imageIndex) + "," + values["tile"] + "," + palette + "," + rects[targetName].first + "," + rects[targetName].second + "," + brightness + "," + defaultTile;
+						if(!conditions.empty()) {
+							tileLine = "[" + conditions + "]" + tileLine;
+						}
+						output.push_back(tileLine);
+					}
+				}
+				continue;
+			}
+
+			output.push_back(rawLine);
+		}
+
+		string rewritten;
+		for(string line : output) {
+			rewritten += line;
+			rewritten += "\n";
+		}
+		hdDefinition.assign(rewritten.begin(), rewritten.end());
+	}
+}
 HdPackLoader::HdPackLoader()
 {
 }
@@ -110,6 +601,8 @@ bool HdPackLoader::LoadPack()
 		if(!LoadFile("hires.txt", hdDefinition)) {
 			return false;
 		}
+
+		ApplySemanticHdPackPreprocess(hdDefinition);
 
 		InitializeGlobalConditions();
 
