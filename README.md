@@ -1,35 +1,35 @@
 # MesenCE Libretro
 
-An independent NES/Famicom/Famicom Disk System Libretro core based on
+An experimental NES/Famicom/Famicom Disk System Libretro core based on
 [MesenCE](https://github.com/nesdev-org/MesenCE).
 
-This project combines the MesenCE NES/FDS emulation core with a Libretro
+This fork combines the MesenCE NES/FDS emulation core with a RetroArch/Libretro
 frontend, RetroAchievements-compatible memory exposure, modern Mesen HD-pack
 support, FDS firmware handling, and RetroArch-owned frame pacing.
 
-> **Status:** `v1.0.26` is the current experimental release. Windows x64 is the
-> primary tested target. Keep the stock Mesen core installed alongside this
-> core while testing.
+> **Status:** `v1.0.27` is the current experimental Windows x64 release. Keep
+> the stock Mesen core installed alongside this core while testing.
 
 ## Highlights
 
 - NES, Famicom, and Famicom Disk System emulation
-- Modern Mesen HD packs, including current addition-rule support
+- Separate Libretro core identity, so it does not overwrite stock Mesen
 - RetroAchievements support, including Hardcore mode
 - RetroArch-controlled fast-forward, slow motion, frame advance, and throttling
 - Full-resolution HD-frame delivery through Libretro
+- Modern Mesen HD-pack support, including addition rules
+- Fork-only semantic HD-pack syntax for smaller, more maintainable packs
 - Portable Windows x64 build with static GCC/C++ runtime linkage
-- Separate core identity, so it does not overwrite the stock Mesen core
 
 ## Core identity
 
-The generated core is:
+Generated core DLL:
 
 ```text
 mesen_ce_nes_libretro.dll
 ```
 
-RetroArch displays it as:
+RetroArch display name:
 
 ```text
 Nintendo - NES / Famicom / FDS (Mesen CE Experimental)
@@ -44,14 +44,21 @@ Requirements:
 - Git
 - MSYS2 MinGW64
 
-Run:
+Build:
 
 ```powershell
 Set-ExecutionPolicy -Scope Process Bypass
 .\BUILD_WINDOWS_X64.ps1
 ```
 
-The finished files are written to:
+Or with an explicit MSYS2 root:
+
+```powershell
+pwsh -ExecutionPolicy Bypass -File ".\BUILD_WINDOWS_X64.ps1" `
+  -MsysRoot "C:\_Hub\_Dev\Tools\MSYS2"
+```
+
+Build outputs:
 
 ```text
 dist\mesen_ce_nes_libretro.dll
@@ -64,11 +71,10 @@ For detailed instructions, see [BUILDING.md](BUILDING.md).
 
 ```powershell
 .\INSTALL_TO_RETROARCH.ps1 `
-    -RetroArchPath "C:\Path\To\RetroArch"
+  -RetroArchPath "C:\Path\To\RetroArch"
 ```
 
-The installer uses a separate filename and does not replace
-`mesen_libretro.dll`.
+The installer uses a separate filename and does not replace `mesen_libretro.dll`.
 
 ## FDS BIOS
 
@@ -98,6 +104,43 @@ RetroArch\system\HdPacks\Super Mario Bros. 2 Lost Levels (1986) (Japan)\hires.tx
 
 HD packs and copyrighted game files are not distributed with this repository.
 
+### HD-pack syntax support
+
+This fork supports classic Mesen/MesenCE HD-pack syntax and adds fork-only
+semantic syntax for reducing duplicate pack rules.
+
+Classic tags include:
+
+```text
+<ver>, <scale>, <img>, <tile>, <condition>, <background>,
+<overscan>, <patch>, <options>, <bgm>, <sfx>, <addition>
+```
+
+Fork-only semantic tags include:
+
+```text
+<page>, <watch>, <paletteSet>, <rect>, <context>,
+<contextTemplate>, <route>, <replace>
+```
+
+These semantic rules are lowered into classic HD-pack rules at load time, so
+existing renderer behavior is preserved while large generated packs can stay
+much smaller and more readable.
+
+The SMB2J semantic v2b HD pack was verified with:
+
+```text
+SHA-256: 9192adb59bb1c0255153cf6a915fab5398a7d3f2f83944d90714ceddddb9c1b0
+Bytes:   2,749,621
+Lines:   33,681
+```
+
+For the full working syntax guide, see:
+
+```text
+docs/SemanticHdPack/HD_PACK_SYNTAX_GUIDE.md
+```
+
 ## RetroArch frame pacing
 
 The Libretro execution path does not use MesenCE's standalone frame limiter.
@@ -113,15 +156,6 @@ During HD-pack fast-forward, emulation may run ahead of the asynchronous HD
 decoder. The core presents completed frames and allows RetroArch to duplicate
 the previous frame when no new HD frame is ready.
 
-## Upstream projects
-
-- Emulation core: `nesdev-org/MesenCE`, based on release `2.2.1`
-- Initial Libretro frontend: `hunterk/Mesen2`, commit `516f8ab`
-- Libretro integration, NES/FDS build, HD-pack path, FDS, achievements, video,
-  shutdown, and pacing work: this project and its contributors
-
-See [UPSTREAMS.md](UPSTREAMS.md) for attribution details.
-
 ## Scope
 
 The public core currently targets NES/FDS only. The repository retains the
@@ -133,16 +167,25 @@ but the Libretro makefile builds the focused NES/FDS source set.
 - Windows x64 is the primary tested platform.
 - Save-state compatibility is not promised across preview versions.
 - Older HD packs may require conversion to current MesenCE pack semantics.
-- The current RetroAchievements memory map is sufficient for the tested FDS
-  target but should receive broader game coverage.
+- Fork-only semantic HD-pack tags require this fork and are not stock MesenCE syntax.
+- The RetroAchievements memory map is sufficient for tested FDS targets but
+  should receive broader game coverage.
 - The core remains experimental and should not replace the stock Mesen core.
+
+## Upstream projects
+
+- Emulation core: `nesdev-org/MesenCE`, based on release `2.2.1`
+- Initial Libretro frontend: `hunterk/Mesen2`, commit `516f8ab`
+- Libretro integration, NES/FDS build, HD-pack path, FDS, achievements, video,
+  shutdown, pacing, and semantic HD-pack work: this project and its contributors
+
+See [UPSTREAMS.md](UPSTREAMS.md) for attribution details.
 
 ## License
 
 This is a derivative work of GPL-licensed upstream projects. The repository
 retains the upstream license files and source notices. Distributed binaries
-must be accompanied by the corresponding source under the applicable GPL
-terms.
+must be accompanied by the corresponding source under the applicable GPL terms.
 
 This project is not an official release of MesenCE, nesdev.org, Libretro,
 RetroArch, or RetroAchievements.
