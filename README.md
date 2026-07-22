@@ -189,3 +189,18 @@ must be accompanied by the corresponding source under the applicable GPL terms.
 
 This project is not an official release of MesenCE, nesdev.org, Libretro,
 RetroArch, or RetroAchievements.
+
+<!-- HD_PRIORITY_COMPOSITOR_V9_START -->
+## HD-pack priority compositor
+
+Current recommended HD renderer: `v1.3.0`
+
+- Draws only the HD sprite candidates already present at the current NES pixel.
+- Uses inherited NES sprite priority for stable back-to-front overlap.
+- Keeps synthetic `<addition>` artwork attached to its parent through provenance.
+- Prevents additions from contaminating native `spriteNearby` and `spriteAtPosition` checks.
+- Fixes Mini Mario foot disappearance and stale transformation-frame artwork.
+- Uses frame-local synthetic rule caching so pose, direction, route, and RAM-state changes resolve correctly.
+- Avoids the experimental full-scene compositor's severe performance regression.
+- Requires no `hires.txt` or pack-author changes.
+<!-- HD_PRIORITY_COMPOSITOR_V9_END -->

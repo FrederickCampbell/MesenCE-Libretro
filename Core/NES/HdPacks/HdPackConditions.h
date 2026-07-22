@@ -337,7 +337,7 @@ struct HdPackSpriteAtPositionCondition : public HdPackBaseTileCondition
 	bool InternalCheckCondition(int x, int y, HdPpuTileInfo* tile) override
 	{
 		for(int i = 0, len = _screenInfo->ScreenTiles[PixelOffset].SpriteCount; i < len; i++) {
-			HdPpuTileInfo& target = _screenInfo->ScreenTiles[PixelOffset].Sprite[i];
+			HdPpuTileInfo& target = _screenInfo->ScreenTiles[PixelOffset].Sprite[i]; if(target.IsSyntheticAddition) { continue; }
 			if(TileIndex >= 0) {
 				if((target.PaletteColors == PaletteColors || IgnorePalette) && (target.TileIndex == TileIndex || _hdPack->GetFallbackTile(target.TileIndex) == TileIndex)) {
 					return true;
@@ -395,7 +395,7 @@ struct HdPackSpriteNearbyCondition : public HdPackBaseTileCondition
 		}
 
 		for(int i = 0, len = _screenInfo->ScreenTiles[pixelIndex].SpriteCount; i < len; i++) {
-			HdPpuTileInfo& target = _screenInfo->ScreenTiles[pixelIndex].Sprite[i];
+			HdPpuTileInfo& target = _screenInfo->ScreenTiles[pixelIndex].Sprite[i]; if(target.IsSyntheticAddition) { continue; }
 			if(TileIndex >= 0) {
 				if((target.PaletteColors == PaletteColors || IgnorePalette) && (target.TileIndex == TileIndex || _hdPack->GetFallbackTile(target.TileIndex) == TileIndex)) {
 					return true;

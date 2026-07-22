@@ -46,6 +46,13 @@ private:
 		int16_t BgMaxX = -1;
 	};
 
+	struct HdSyntheticSpriteInfo
+	{
+		HdPpuTileInfo Tile = {};
+		HdPackTileInfo* ResolvedTile = nullptr;
+		bool MatchResolved = false;
+	};
+
 	static constexpr uint8_t PriorityLevelsPerLayer = 10;
 	static constexpr uint8_t BehindBgSpritesPriority = 0 * PriorityLevelsPerLayer;
 	static constexpr uint8_t BehindBgPriority = 1 * PriorityLevelsPerLayer;
@@ -66,6 +73,10 @@ private:
 	int32_t _scrollX = 0;
 
 	unordered_map<HdTileKey, vector<HdPackAdditionalSpriteInfo>> _additionalTilesByKey;
+	unordered_map<uint32_t, vector<HdSyntheticSpriteInfo>> _syntheticSpritesByPixel;
+	unordered_map<uint32_t, HdPackTileInfo*> _syntheticMatchCache;
+	bool _useLightweightPriorityCompositor = true;
+	bool _lightweightPriorityDiagnostics = false;
 
 	template<HdPackBlendMode blendMode>
 	__forceinline void BlendColors(uint8_t output[4], uint8_t input[4]);
@@ -90,6 +101,8 @@ private:
 	bool DrawAdditionalTiles(int32_t x, int32_t y, HdPpuTileInfo& tile, bool checkFallbackTiles);
 	void BuildAdditionalTileCache(int32_t x, int32_t y, HdPpuTileInfo& tile, bool checkFallbackTiles);
 	void InsertAdditionalSprite(int32_t x, int32_t y, HdPpuTileInfo& sprite, HdPackAdditionalSpriteInfo& additionalSprite);
+	uint32_t BuildProvenanceId(HdPpuTileInfo& sprite, HdPackAdditionalSpriteInfo& additionalSprite);
+	HdPackTileInfo* GetCachedSyntheticMatchingTile(uint32_t x, uint32_t y, HdSyntheticSpriteInfo& sprite);
 
 	__forceinline void GetPixels(uint32_t x, uint32_t y, HdPpuPixelInfo& pixelInfo, uint32_t* outputBuffer, uint32_t screenWidth);
 	__forceinline void ProcessGrayscaleAndEmphasis(HdPpuPixelInfo& pixelInfo, uint32_t* outputBuffer, uint32_t hdScreenWidth);

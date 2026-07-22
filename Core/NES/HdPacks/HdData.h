@@ -93,6 +93,10 @@ struct HdPpuTileInfo : public HdTileKey
 	bool HorizontalMirroring = false;
 	bool VerticalMirroring = false;
 	bool BackgroundPriority = false;
+	bool IsSyntheticAddition = false;
+	uint8_t RootSpriteIndex = 0xFF;
+	uint8_t SpritePriorityRank = 0xFF;
+	uint32_t ProvenanceId = 0;
 
 	uint8_t BgColorIndex = 0;
 	uint8_t SpriteColorIndex = 0;
