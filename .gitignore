@@ -3,43 +3,82 @@
 /build/
 /out/
 /artifacts/
+/release-stage/
 build-transcript.txt
 
 # Libretro build products
-Libretro/*.dll
+/Libretro/mesen_ce_nes_libretro.dll
 Libretro/*.map
 Libretro/*.o
 Libretro/**/*.o
 Libretro/*.d
 Libretro/**/*.d
 
-# Native compiler output
+# Native compiler and linker output
+*.o
+*.d
+*.dep
 *.obj
+*.map
 *.pdb
 *.ilk
 *.exp
+*.lib
+*.a
 *.gcda
 *.gcno
+DLL_IMPORTS.txt
+SHA256SUMS.txt
 
-# IDE and editor state
+# Visual Studio, MSBuild, .NET, and CMake
 .vs/
-.vscode/
-.idea/
+**/.vs/
+**/bin/
+**/obj/
+**/Debug/
+**/Release/
+**/x64/
+**/x86/
+**/publish/
 *.suo
 *.user
 *.userosscache
 *.sln.docstates
+*.VC.db
+*.VC.opendb
+TestResults/
+*.coverage
+*.coveragexml
+packages/
+*.nupkg
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+cmake-build-*/
 
-# Python
+# Editor and Python state
+.vscode/
+.idea/
 __pycache__/
 *.py[cod]
+.pytest_cache/
+.cache/
 
-# Logs and crash captures
+# Logs, crash captures, and temporary files
 *.log
 mesen-ce-gdb-*.txt
 mesen-ce-gdb-*.log
+*.tmp
+*.temp
+*.bak
+*.bak_*
+*.orig
+*.rej
+*~
+*.patch.tmp
+cleanup_manifest_*.txt
 
-# Local test content and firmware
+# Local test content, firmware, and HD packs
 *.nes
 *.fds
 *.unf
@@ -53,48 +92,26 @@ disksys.rom
 FdsBios.bin
 /HdPacks/
 
+# Local SMB2J research cache
+/_smb2j_disasm_cache/
+
+# Local release helpers and staging
+/BUILD_AND_RUN_MESENCE_TEST*.ps1
+/LAUNCH_MESENCE_TEST.ps1
+/CREATE_PRIVACY_SAFE_MESENCE_REPO*.ps1
+/MesenCE-Libretro-v*-Windows-x64.zip
+/PUBLICATION_SUMMARY.txt
+
+# Superseded generated intermediate notes
+/RELEASE_NOTES_HD_BACKGROUND_WRAP_V110.md
+/RELEASE_NOTES_HD_GAMEPLAY_SCROLL_V111.md
+
 # Archives and local backups
 *.7z
 *.rar
 *.backup-*
-*.orig
-*.rej
 
-# OS metadata
+# Operating-system metadata
 Thumbs.db
 Desktop.ini
 .DS_Store
-*.o
-*.d
-*.map
-/release-stage/
-/MesenCE-Libretro-v*-Windows-x64.zip
-/PUBLICATION_SUMMARY.txt
-# Generated native build artifacts
-*.dep
-*.dll
-*.exe
-DLL_IMPORTS.txt
-SHA256SUMS.txt
-# Local release and smoke-test files
-/BUILD_AND_RUN_MESENCE_TEST*.ps1
-/LAUNCH_MESENCE_TEST.ps1
-/CREATE_PRIVACY_SAFE_MESENCE_REPO*.ps1
-# Local content, firmware, and HD packs
-
-# MesenCE local patch/build cleanup
-*.bak
-*.bak_*
-*.orig
-*.rej
-*~
-*.tmp
-*.patch.tmp
-*.o
-*.obj
-*.d
-*.pdb
-*.ilk
-*.exp
-*.map
-cleanup_manifest_*.txt
