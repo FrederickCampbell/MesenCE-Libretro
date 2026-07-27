@@ -412,6 +412,20 @@ enum class HdPackBlendMode
 	Subtract
 };
 
+enum class HdBackgroundWrapMode
+{
+	None,
+	RepeatX,
+	RepeatY,
+	RepeatXY
+};
+
+enum class HdBackgroundScrollMode
+{
+	Scanline,
+	Gameplay
+};
+
 struct HdBackgroundInfo
 {
 	HdPackBitmapInfo* Data;
@@ -425,6 +439,8 @@ struct HdBackgroundInfo
 	uint32_t Top;
 
 	HdPackBlendMode BlendMode;
+	HdBackgroundWrapMode WrapMode = HdBackgroundWrapMode::None;
+	HdBackgroundScrollMode ScrollMode = HdBackgroundScrollMode::Scanline;
 
 	uint32_t* data()
 	{

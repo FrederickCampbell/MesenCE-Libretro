@@ -131,11 +131,38 @@ void HdNesPack<scale>::DrawColor(uint32_t color, uint32_t* outputBuffer, uint32_
 
 template<uint32_t scale>
 template<HdPackBlendMode blendMode>
-void HdNesPack<scale>::DrawCustomBackground(HdBackgroundInfo& bgInfo, uint32_t* outputBuffer, uint32_t x, uint32_t y, uint32_t screenWidth)
+void HdNesPack<scale>::DrawCustomBackground(HdBackgroundInfo& bgInfo, uint32_t* outputBuffer, int32_t x, int32_t y, uint32_t screenWidth)
 {
-	uint32_t width = bgInfo.Data->Width;
-	uint32_t* pngData = bgInfo.data() + ((bgInfo.Top + y) * scale * width) + ((bgInfo.Left + x) * scale);
+	// Background wrap is evaluated in native NES pixels. The selected native
+	// pixel is then expanded to the pack scale exactly like a normal HD layer.
+	int32_t sourceWidth = (int32_t)(bgInfo.Data->Width / scale) - (int32_t)bgInfo.Left;
+	int32_t sourceHeight = (int32_t)(bgInfo.Data->Height / scale) - (int32_t)bgInfo.Top;
+	if(sourceWidth <= 0 || sourceHeight <= 0) {
+		return;
+	}
 
+	bool repeatX = bgInfo.WrapMode == HdBackgroundWrapMode::RepeatX || bgInfo.WrapMode == HdBackgroundWrapMode::RepeatXY;
+	bool repeatY = bgInfo.WrapMode == HdBackgroundWrapMode::RepeatY || bgInfo.WrapMode == HdBackgroundWrapMode::RepeatXY;
+	auto positiveModulo = [](int32_t value, int32_t modulus) {
+		int32_t result = value % modulus;
+		return result < 0 ? result + modulus : result;
+	};
+
+	if(repeatX) {
+		x = positiveModulo(x, sourceWidth);
+	} else if(x < 0 || x >= sourceWidth) {
+		return;
+	}
+	if(repeatY) {
+		y = positiveModulo(y, sourceHeight);
+	} else if(y < 0 || y >= sourceHeight) {
+		return;
+	}
+
+	uint32_t width = bgInfo.Data->Width;
+	uint32_t* pngData = bgInfo.data()
+		+ (((uint32_t)bgInfo.Top + (uint32_t)y) * scale * width)
+		+ (((uint32_t)bgInfo.Left + (uint32_t)x) * scale);
 	if(bgInfo.Brightness == 255) {
 		for(uint32_t i = 0; i < scale; i++) {
 			for(uint32_t j = 0; j < scale; j++) {
@@ -235,11 +262,34 @@ void HdNesPack<scale>::DrawTile(HdPpuTileInfo& tileInfo, HdPackTileInfo& hdPackT
 template<uint32_t scale>
 void HdNesPack<scale>::OnLineStart(HdPpuPixelInfo& lineFirstPixel, uint8_t y)
 {
-	_scrollX = ((lineFirstPixel.TmpVideoRamAddr & 0x1F) << 3) | lineFirstPixel.XScroll | ((lineFirstPixel.TmpVideoRamAddr & 0x400) ? 0x100 : 0);
+	int32_t rawScrollX = ((lineFirstPixel.TmpVideoRamAddr & 0x1F) << 3) | lineFirstPixel.XScroll | ((lineFirstPixel.TmpVideoRamAddr & 0x400) ? 0x100 : 0);
+	_scrollX = rawScrollX;
 	_useCachedTile = false;
 
-	int32_t scrollY = (((lineFirstPixel.TmpVideoRamAddr & 0x3E0) >> 2) | ((lineFirstPixel.TmpVideoRamAddr & 0x7000) >> 12)) + ((lineFirstPixel.TmpVideoRamAddr & 0x800) ? 240 : 0);
+	int32_t continuousScrollX = rawScrollX;
+	if(_scrollXInitialized[y]) {
+		int32_t delta = rawScrollX - (int32_t)_lastRawScrollX[y];
+		if(delta > 256) {
+			delta -= 512;
+		} else if(delta < -256) {
+			delta += 512;
+		}
 
+		// A real camera moves only a few pixels per frame. A larger discontinuity
+		// is a level load, warp, rewind, or state load and should start fresh.
+		if(delta > 64 || delta < -64) {
+			_continuousScrollX[y] = rawScrollX;
+		} else {
+			_continuousScrollX[y] += delta;
+		}
+		continuousScrollX = _continuousScrollX[y];
+	} else {
+		_continuousScrollX[y] = rawScrollX;
+		_scrollXInitialized[y] = true;
+	}
+	_lastRawScrollX[y] = (uint16_t)rawScrollX;
+
+	int32_t scrollY = (((lineFirstPixel.TmpVideoRamAddr & 0x3E0) >> 2) | ((lineFirstPixel.TmpVideoRamAddr & 0x7000) >> 12)) + ((lineFirstPixel.TmpVideoRamAddr & 0x800) ? 240 : 0);
 	for(int layer = 0; layer < 4; layer++) {
 		for(int i = 0; i < _activeBgCount[layer]; i++) {
 			HdBgConfig& cfg = _bgConfig[layer * HdNesPack::PriorityLevelsPerLayer + i];
@@ -249,12 +299,27 @@ void HdNesPack<scale>::OnLineStart(HdPpuPixelInfo& lineFirstPixel, uint8_t y)
 
 			HdBackgroundInfo& bgInfo = _hdData->BackgroundsByPriority[cfg.BgPriority][cfg.BackgroundIndex];
 			bgInfo.Data->Init();
+			bool repeatX = bgInfo.WrapMode == HdBackgroundWrapMode::RepeatX || bgInfo.WrapMode == HdBackgroundWrapMode::RepeatXY;
+			bool repeatY = bgInfo.WrapMode == HdBackgroundWrapMode::RepeatY || bgInfo.WrapMode == HdBackgroundWrapMode::RepeatXY;
+			bool gameplayScroll = bgInfo.ScrollMode == HdBackgroundScrollMode::Gameplay;
+			int32_t selectedRawScrollX = gameplayScroll ? _gameplayRawScrollX : rawScrollX;
+			int32_t selectedContinuousScrollX = gameplayScroll ? _gameplayContinuousScrollX : continuousScrollX;
+			int32_t selectedScrollY = gameplayScroll ? _gameplayScrollY : scrollY;
+			int32_t horizontalScroll = repeatX ? selectedContinuousScrollX : selectedRawScrollX;
+			cfg.BgScrollX = (int32_t)(horizontalScroll * bgInfo.HorizontalScrollRatio);
+			cfg.BgScrollY = (int32_t)(selectedScrollY * bgInfo.VerticalScrollRatio);
 
-			cfg.BgScrollX = (int32_t)(_scrollX * bgInfo.HorizontalScrollRatio);
-			cfg.BgScrollY = (int32_t)(scrollY * bgInfo.VerticalScrollRatio);
-			if(y >= -cfg.BgScrollY && (y + bgInfo.Top + cfg.BgScrollY + 1) * scale <= bgInfo.Data->Height) {
-				cfg.BgMinX = -cfg.BgScrollX;
-				cfg.BgMaxX = bgInfo.Data->Width / scale - bgInfo.Left - cfg.BgScrollX - 1;
+			int32_t sourceWidth = (int32_t)(bgInfo.Data->Width / scale) - (int32_t)bgInfo.Left;
+			int32_t sourceHeight = (int32_t)(bgInfo.Data->Height / scale) - (int32_t)bgInfo.Top;
+			bool verticalVisible = repeatY || (y >= -cfg.BgScrollY && (y + bgInfo.Top + cfg.BgScrollY + 1) * scale <= bgInfo.Data->Height);
+			if(verticalVisible && sourceWidth > 0 && sourceHeight > 0) {
+				if(repeatX) {
+					cfg.BgMinX = 0;
+					cfg.BgMaxX = NesConstants::ScreenWidth - 1;
+				} else {
+					cfg.BgMinX = -cfg.BgScrollX;
+					cfg.BgMaxX = sourceWidth - cfg.BgScrollX - 1;
+				}
 			} else {
 				cfg.BgMinX = -1;
 				cfg.BgMaxX = -1;
@@ -565,10 +630,12 @@ void HdNesPack<scale>::DrawBackgroundLayer(uint8_t priority, uint32_t x, uint32_
 	HdBgConfig bgConfig = _bgConfig[(int)priority];
 	if((int32_t)x >= bgConfig.BgMinX && (int32_t)x <= bgConfig.BgMaxX) {
 		HdBackgroundInfo& bgInfo = _hdData->BackgroundsByPriority[bgConfig.BgPriority][bgConfig.BackgroundIndex];
+		int32_t sourceX = (int32_t)x + bgConfig.BgScrollX;
+		int32_t sourceY = (int32_t)y + bgConfig.BgScrollY;
 		switch(bgInfo.BlendMode) {
-			case HdPackBlendMode::Alpha: DrawCustomBackground<HdPackBlendMode::Alpha>(bgInfo, outputBuffer, x + bgConfig.BgScrollX, y + bgConfig.BgScrollY, screenWidth); break;
-			case HdPackBlendMode::Add: DrawCustomBackground<HdPackBlendMode::Add>(bgInfo, outputBuffer, x + bgConfig.BgScrollX, y + bgConfig.BgScrollY, screenWidth); break;
-			case HdPackBlendMode::Subtract: DrawCustomBackground<HdPackBlendMode::Subtract>(bgInfo, outputBuffer, x + bgConfig.BgScrollX, y + bgConfig.BgScrollY, screenWidth); break;
+			case HdPackBlendMode::Alpha: DrawCustomBackground<HdPackBlendMode::Alpha>(bgInfo, outputBuffer, sourceX, sourceY, screenWidth); break;
+			case HdPackBlendMode::Add: DrawCustomBackground<HdPackBlendMode::Add>(bgInfo, outputBuffer, sourceX, sourceY, screenWidth); break;
+			case HdPackBlendMode::Subtract: DrawCustomBackground<HdPackBlendMode::Subtract>(bgInfo, outputBuffer, sourceX, sourceY, screenWidth); break;
 		}
 	}
 }
@@ -753,6 +820,60 @@ template<uint32_t scale>
 void HdNesPack<scale>::Process(HdScreenInfo* hdScreenInfo, uint32_t* outputBuffer, OverscanDimensions& overscan)
 {
 	_hdScreenInfo = hdScreenInfo;
+
+	// HD GAMEPLAY FAST-FORWARD CONTINUITY FIX V111F1
+	// RetroArch fast-forward may skip presentation frames, so a forward gap in
+	// FrameNumber is normal and must not discard the accumulated world scroll.
+	// Only a backward-moving frame counter indicates rewind/state-load history
+	// where the HD-only camera accumulator should restart.
+	bool frameCounterMovedBackwards = _frameNumberInitialized && hdScreenInfo->FrameNumber < _lastFrameNumber;
+	if(!_frameNumberInitialized || frameCounterMovedBackwards) {
+		for(uint32_t y = 0; y < NesConstants::ScreenHeight; y++) {
+			_scrollXInitialized[y] = false;
+		}
+		_gameplayScrollInitialized = false;
+		_frameNumberInitialized = true;
+	}
+	_lastFrameNumber = hdScreenInfo->FrameNumber;
+
+	// Select the dominant horizontal PPU scroll below the usual HUD region.
+	// This generalizes to games with a fixed top status bar without touching
+	// emulated RAM or requiring game-specific addresses.
+	uint16_t gameplayScrollCounts[512] = {};
+	uint16_t bestGameplayCount = 0;
+	uint32_t gameplaySampleY = 32;
+	int32_t gameplayRawScrollX = 0;
+	for(uint32_t sampleY = 32; sampleY < NesConstants::ScreenHeight; sampleY++) {
+		HdPpuPixelInfo& samplePixel = hdScreenInfo->ScreenTiles[sampleY << 8];
+		int32_t sampleScrollX = ((samplePixel.TmpVideoRamAddr & 0x1F) << 3) | samplePixel.XScroll | ((samplePixel.TmpVideoRamAddr & 0x400) ? 0x100 : 0);
+		uint16_t count = ++gameplayScrollCounts[sampleScrollX & 0x1FF];
+		if(count > bestGameplayCount) {
+			bestGameplayCount = count;
+			gameplayRawScrollX = sampleScrollX;
+			gameplaySampleY = sampleY;
+		}
+	}
+
+	HdPpuPixelInfo& gameplayPixel = hdScreenInfo->ScreenTiles[gameplaySampleY << 8];
+	_gameplayScrollY = (((gameplayPixel.TmpVideoRamAddr & 0x3E0) >> 2) | ((gameplayPixel.TmpVideoRamAddr & 0x7000) >> 12)) + ((gameplayPixel.TmpVideoRamAddr & 0x800) ? 240 : 0);
+	_gameplayRawScrollX = gameplayRawScrollX;
+	if(_gameplayScrollInitialized) {
+		int32_t delta = gameplayRawScrollX - (_gameplayContinuousScrollX & 0x1FF);
+		if(delta > 256) {
+			delta -= 512;
+		} else if(delta < -256) {
+			delta += 512;
+		}
+		if(delta > 64 || delta < -64) {
+			_gameplayContinuousScrollX = gameplayRawScrollX;
+		} else {
+			_gameplayContinuousScrollX += delta;
+		}
+	} else {
+		_gameplayContinuousScrollX = gameplayRawScrollX;
+		_gameplayScrollInitialized = true;
+	}
+
 	uint32_t hdScale = GetScale();
 	uint32_t screenWidth = (NesConstants::ScreenWidth - overscan.Left - overscan.Right) * hdScale;
 

@@ -12,7 +12,7 @@ protected:
 	HdScreenInfo* _hdScreenInfo = nullptr;
 
 public:
-	static constexpr uint32_t CurrentVersion = 109;
+	static constexpr uint32_t CurrentVersion = 111;
 
 	virtual uint32_t GetScale() = 0;
 
@@ -72,6 +72,21 @@ private:
 	bool _useCachedTile = false;
 	int32_t _scrollX = 0;
 
+	// RepeatX layers use an unwrapped scroll value per scanline so arbitrary
+	// parallax ratios remain continuous across the NES 9-bit PPU wrap.
+	int32_t _continuousScrollX[NesConstants::ScreenHeight] = {};
+	uint16_t _lastRawScrollX[NesConstants::ScreenHeight] = {};
+	bool _scrollXInitialized[NesConstants::ScreenHeight] = {};
+	uint32_t _lastFrameNumber = 0;
+	bool _frameNumberInitialized = false;
+
+	// Gameplay-mode HD backgrounds use the dominant playfield scroll for every
+	// scanline, preventing fixed HUD splits from freezing the top of the layer.
+	int32_t _gameplayRawScrollX = 0;
+	int32_t _gameplayContinuousScrollX = 0;
+	int32_t _gameplayScrollY = 0;
+	bool _gameplayScrollInitialized = false;
+
 	unordered_map<HdTileKey, vector<HdPackAdditionalSpriteInfo>> _additionalTilesByKey;
 	unordered_map<uint32_t, vector<HdSyntheticSpriteInfo>> _syntheticSpritesByPixel;
 	unordered_map<uint32_t, HdPackTileInfo*> _syntheticMatchCache;
@@ -91,7 +106,7 @@ private:
 	__forceinline void DrawBackgroundLayer(uint8_t priority, uint32_t x, uint32_t y, uint32_t* outputBuffer, uint32_t screenWidth);
 
 	template<HdPackBlendMode blendMode>
-	__forceinline void DrawCustomBackground(HdBackgroundInfo& bgInfo, uint32_t* outputBuffer, uint32_t x, uint32_t y, uint32_t screenWidth);
+	__forceinline void DrawCustomBackground(HdBackgroundInfo& bgInfo, uint32_t* outputBuffer, int32_t x, int32_t y, uint32_t screenWidth);
 
 	void OnLineStart(HdPpuPixelInfo& lineFirstPixel, uint8_t y);
 	int32_t GetLayerIndex(uint8_t priority);

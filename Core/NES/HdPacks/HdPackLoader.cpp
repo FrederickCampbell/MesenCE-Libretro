@@ -1103,7 +1103,7 @@ HdPackConditionOperator HdPackLoader::ParseConditionOperator(string& opString)
 void HdPackLoader::ProcessBackgroundTag(vector<string>& tokens, vector<HdPackCondition*> conditions)
 {
 	checkConstraint(tokens.size() >= 2, "Background tag should contain at least 2 parameters");
-	checkConstraintEx(tokens.size() < 9, "Background tag contains too many parameters");
+	checkConstraintEx(tokens.size() < 11, "Background tag contains too many parameters");
 	HdPackBitmapInfo* bgFileData = nullptr;
 
 	auto result = _backgroundsByName.find(tokens[0]);
@@ -1137,6 +1137,8 @@ void HdPackLoader::ProcessBackgroundTag(vector<string>& tokens, vector<HdPackCon
 		backgroundInfo.Top = 0;
 		backgroundInfo.Conditions.reserve(conditions.size());
 		backgroundInfo.BlendMode = HdPackBlendMode::Alpha;
+		backgroundInfo.WrapMode = HdBackgroundWrapMode::None;
+		backgroundInfo.ScrollMode = HdBackgroundScrollMode::Scanline;
 
 		for(HdPackCondition* condition : conditions) {
 			switch(condition->GetConditionType()) {
@@ -1183,6 +1185,24 @@ void HdPackLoader::ProcessBackgroundTag(vector<string>& tokens, vector<HdPackCon
 					backgroundInfo.BlendMode = blendMode.value();
 				} else {
 					logError("Invalid blend mode: " + tokens[7]);
+				}
+			}
+			if(tokens.size() > 8) {
+				checkConstraint(_data->Version >= 110, "Background wrap mode feature requires version 110+ of HD Packs");
+				auto wrapMode = magic_enum::enum_cast<HdBackgroundWrapMode>(tokens[8]);
+				if(wrapMode.has_value()) {
+					backgroundInfo.WrapMode = wrapMode.value();
+				} else {
+					logError("Invalid background wrap mode: " + tokens[8]);
+				}
+			}
+			if(tokens.size() > 9) {
+				checkConstraint(_data->Version >= 111, "Background gameplay scroll mode feature requires version 111+ of HD Packs");
+				auto scrollMode = magic_enum::enum_cast<HdBackgroundScrollMode>(tokens[9]);
+				if(scrollMode.has_value()) {
+					backgroundInfo.ScrollMode = scrollMode.value();
+				} else {
+					logError("Invalid background scroll mode: " + tokens[9]);
 				}
 			}
 		}

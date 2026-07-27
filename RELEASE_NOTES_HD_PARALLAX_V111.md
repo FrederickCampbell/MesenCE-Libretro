@@ -1,0 +1,33 @@
+# MesenCE HD Background Parallax v111
+
+This release adds native layered, seamless HD-pack backgrounds.
+
+## Changes
+
+- Added RepeatX, RepeatY, and RepeatXY background wrapping.
+- Added continuous parallax tracking for levels longer than the NES 512-pixel scroll range.
+- Added the Gameplay scroll mode so HD layers continue behind fixed HUD splits.
+- Fixed parallax position jumps during RetroArch fast-forward, including death and flagpole animations.
+- Preserved existing finite-background behavior when no wrapping mode is specified.
+
+## New syntax
+
+``text
+<background>file,brightness,xRatio,yRatio,priority,left,top,blend,wrap,scrollMode
+``
+
+Example:
+
+``text
+<background>clouds.png,1.0,0.125,0.0,1,0,0,Alpha,RepeatX,Gameplay
+``
+
+HD-pack version 111 is required for Gameplay. Version 110 introduced wrapping.
+
+This is an HD-renderer feature and does not alter NES RAM, game logic, the Libretro ABI, or save-state serialization.
+
+## Assets
+
+- mesen_ce_nes_libretro.dll
+- mesen_ce_nes_libretro.info
+- SHA-256 checksum
