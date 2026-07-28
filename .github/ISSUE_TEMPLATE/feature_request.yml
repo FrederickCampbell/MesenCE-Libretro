@@ -1,0 +1,37 @@
+name: Feature request
+description: Propose a focused improvement to the NES/FDS Libretro core
+title: "[Feature]: "
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or limitation
+      description: Describe the concrete behavior that needs improvement.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+    validations:
+      required: true
+  - type: textarea
+    id: compatibility
+    attributes:
+      label: Compatibility and performance considerations
+      description: Explain effects on non-HD games, FDS, classic packs, semantic packs, and hot paths.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope confirmation
+      options:
+        - label: This request is relevant to the focused NES/FDS Libretro fork.
+          required: true
+        - label: This request does not require distributing copyrighted game data.
+          required: true

@@ -1,0 +1,84 @@
+name: Bug report
+description: Report a reproducible core, build, achievements, or HD-renderer problem
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not attach ROMs, BIOS files, copyrighted HD-pack assets, credentials, or private data.
+  - type: input
+    id: version
+    attributes:
+      label: Core version or commit
+      placeholder: v1.4.0 or commit SHA
+    validations:
+      required: true
+  - type: input
+    id: retroarch
+    attributes:
+      label: RetroArch version
+    validations:
+      required: true
+  - type: input
+    id: system
+    attributes:
+      label: Operating system and CPU
+      placeholder: Windows 11, Intel Core i5-13600K
+    validations:
+      required: true
+  - type: dropdown
+    id: content
+    attributes:
+      label: Content type
+      options:
+        - NES or Famicom
+        - Famicom Disk System
+        - Build or installation
+        - RetroAchievements memory
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: hdpack
+    attributes:
+      label: HD-pack state
+      options:
+        - Disabled
+        - Classic Mesen/MesenCE pack
+        - Fork semantic pack
+        - Not applicable
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+      description: Include the smallest reliable sequence that triggers the problem.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or diagnostics
+      render: shell
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Safety checks
+      options:
+        - label: I did not attach copyrighted ROM, BIOS, or HD-pack assets.
+          required: true
+        - label: I checked the documentation and latest release notes.
+          required: true

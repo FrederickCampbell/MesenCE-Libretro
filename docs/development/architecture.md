@@ -1,4 +1,6 @@
-# Port notes
+# Port architecture
+
+[Documentation index](../README.md)
 
 This repository contains a patched MesenCE source tree rather than a script
 that recreates the port during every build.
@@ -17,4 +19,4 @@ Important integration decisions:
    core.
 
 The original MesenCE README from the imported source revision is preserved as
-`docs/UPSTREAM_MESENCE_README.md`.
+[`docs/upstream/README.md`](../upstream/README.md).

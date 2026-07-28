@@ -1,0 +1,11 @@
+title: MesenCE Libretro Documentation
+description: NES/FDS Libretro, RetroAchievements, and modern HD-pack documentation
+theme: jekyll-theme-cayman
+show_downloads: true
+plugins:
+  - jekyll-relative-links
+relative_links:
+  enabled: true
+  collections: true
+include:
+  - README.md

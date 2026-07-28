@@ -1,4 +1,6 @@
-# Building MesenCE Libretro
+# Build MesenCE Libretro on Windows
+
+[Documentation index](../README.md)
 
 ## Supported build
 
@@ -55,7 +57,7 @@ the public artifacts to:
 ```text
 dist\mesen_ce_nes_libretro.dll
 dist\mesen_ce_nes_libretro.info
-dist\SHA256SUMS.txt
+dist\mesen_ce_nes_libretro.sha256.txt
 ```
 
 ## FDS test requirements
