@@ -1,5 +1,32 @@
 # Changelog
 
+## 1.4.0
+
+- Added HD-pixel smooth gameplay parallax at 8x scale.
+- Added the bulk strip compositor for eligible repeating gameplay layers.
+- Preserved the previous block renderer as an automatic compatibility fallback.
+- Added an environment toggle for renderer A/B testing.
+- Kept the supported Windows release build on the stable non-LTO `-O3` path.
+- See [detailed release notes](docs/releases/v1.4.0.md).
+
+## 1.3.0
+
+- Promoted the lightweight HD priority compositor.
+- Preserved local-candidate rendering and provenance-linked additions.
+- Fixed Mini Mario foot flashing and stale transformation artwork.
+- See [detailed release notes](docs/releases/v1.3.0.md).
+
+## 1.0.28-hd-parallax-v111
+
+- Added seamless background wrapping and gameplay-based scrolling.
+- Preserved gameplay-scroll continuity through RetroArch fast-forward.
+- See [detailed release notes](docs/releases/v1.0.28-hd-parallax-v111.md).
+
+## 1.0.27
+
+- Added fork-only semantic HD-pack tags and lowering to classic rules.
+- See [detailed release notes](docs/releases/v1.0.27.md).
+
 ## 1.0.26
 
 - Fixed RetroArch cheat support.

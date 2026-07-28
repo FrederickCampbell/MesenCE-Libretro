@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Documentation
+    url: https://github.com/FrederickCampbell/MesenCE-Libretro/tree/main/docs
+    about: Read installation, build, HD-pack, architecture, and release guides.
+  - name: Latest release
+    url: https://github.com/FrederickCampbell/MesenCE-Libretro/releases/latest
+    about: Download and review the current published release.

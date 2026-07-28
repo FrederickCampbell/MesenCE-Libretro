@@ -93,6 +93,10 @@ struct HdPpuTileInfo : public HdTileKey
 	bool HorizontalMirroring = false;
 	bool VerticalMirroring = false;
 	bool BackgroundPriority = false;
+	bool IsSyntheticAddition = false;
+	uint8_t RootSpriteIndex = 0xFF;
+	uint8_t SpritePriorityRank = 0xFF;
+	uint32_t ProvenanceId = 0;
 
 	uint8_t BgColorIndex = 0;
 	uint8_t SpriteColorIndex = 0;
@@ -222,6 +226,7 @@ public:
 	vector<uint32_t> PixelData;
 	uint32_t Width;
 	uint32_t Height;
+	bool IsFullyOpaque = false;
 
 	void Init()
 	{
@@ -247,8 +252,10 @@ public:
 
 	void PremultiplyAlpha()
 	{
+		IsFullyOpaque = !PixelData.empty();
 		for(size_t i = 0; i < PixelData.size(); i++) {
-			if(PixelData[i] < 0xFF000000) {
+			if((PixelData[i] & 0xFF000000) != 0xFF000000) {
+				IsFullyOpaque = false;
 				uint8_t* output = (uint8_t*)(PixelData.data() + i);
 				uint8_t alpha = output[3] + 1;
 				output[0] = (uint8_t)((alpha * output[0]) >> 8);
@@ -408,6 +415,20 @@ enum class HdPackBlendMode
 	Subtract
 };
 
+enum class HdBackgroundWrapMode
+{
+	None,
+	RepeatX,
+	RepeatY,
+	RepeatXY
+};
+
+enum class HdBackgroundScrollMode
+{
+	Scanline,
+	Gameplay
+};
+
 struct HdBackgroundInfo
 {
 	HdPackBitmapInfo* Data;
@@ -421,6 +442,8 @@ struct HdBackgroundInfo
 	uint32_t Top;
 
 	HdPackBlendMode BlendMode;
+	HdBackgroundWrapMode WrapMode = HdBackgroundWrapMode::None;
+	HdBackgroundScrollMode ScrollMode = HdBackgroundScrollMode::Scanline;
 
 	uint32_t* data()
 	{

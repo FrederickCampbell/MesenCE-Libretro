@@ -1,0 +1,18 @@
+<ver>109
+<scale>8
+
+<page>mario.normal = characters/Mario/mario.png
+<page>luigi.normal = characters/Luigi/luigi.png
+
+<watch>isLuigi = mem(0753)==01
+<watch>swimming = mem(0704)>00
+<watch>firethrow = mem(0711)>00
+
+<paletteSet>playerPalettes = ff063727,ff0c3c1c,ff0f3617,ff162718,ff163027,ff181627,ff193027,ff1a3027,ff302719,ff372716
+
+<rect>player.super.swimFoot = 1792,320,128,64
+<context>swimNoFire = swimming&!firethrow
+<route>playerPage = when isLuigi -> luigi.normal; default -> mario.normal
+
+# Replace the fake tile hash with a real one before testing visually.
+# <replace>tile=31313131313131313131313131313131,paletteSet=playerPalettes,page=@playerPage,target=player.super.swimFoot,context=swimNoFire
