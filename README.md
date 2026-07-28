@@ -7,7 +7,7 @@ This fork combines the MesenCE NES/FDS emulation core with a RetroArch/Libretro
 frontend, RetroAchievements-compatible memory exposure, modern Mesen HD-pack
 support, FDS firmware handling, and RetroArch-owned frame pacing.
 
-> **Status:** `v1.0.27` is the current experimental Windows x64 release. Keep
+> **Status:** `v1.4.0` is the current experimental Windows x64 release. Keep
 > the stock Mesen core installed alongside this core while testing.
 
 ## Highlights
@@ -155,6 +155,27 @@ RetroArch controls:
 During HD-pack fast-forward, emulation may run ahead of the asynchronous HD
 decoder. The core presents completed frames and allows RetroArch to duplicate
 the previous frame when no new HD frame is ready.
+
+<!-- HD_SMOOTH_PARALLAX_V111S4_START -->
+## Smooth HD parallax
+
+Current release: `v1.4.0`
+
+- Retains fractional NES background movement until HD sampling, allowing
+  one-HD-pixel parallax steps at 8x instead of eight-pixel jumps.
+- Bulk-composites eligible lowest-priority `Gameplay` and `RepeatX` background
+  layers as full-width scanline strips.
+- Keeps the previous block renderer as an automatic compatibility fallback.
+- Uses cached image metadata, contiguous spans, and opaque-copy fast paths.
+- Does not alter NES RAM, game logic, PPU timing, the Libretro ABI, memory
+  watches, save-state serialization, or presenter timing.
+- Set `MESENCE_HD_BULK_PARALLAX=0` before launch to force the fallback renderer
+  for diagnostics.
+
+Performance is CPU-bound and depends on HD scale, image dimensions, alpha
+coverage, and active layer count. No formal minimum CPU has been established.
+The confirmed Windows x64 test system uses an Intel Core i5-13600K.
+<!-- HD_SMOOTH_PARALLAX_V111S4_END -->
 
 ## Scope
 

@@ -226,6 +226,7 @@ public:
 	vector<uint32_t> PixelData;
 	uint32_t Width;
 	uint32_t Height;
+	bool IsFullyOpaque = false;
 
 	void Init()
 	{
@@ -251,8 +252,10 @@ public:
 
 	void PremultiplyAlpha()
 	{
+		IsFullyOpaque = !PixelData.empty();
 		for(size_t i = 0; i < PixelData.size(); i++) {
-			if(PixelData[i] < 0xFF000000) {
+			if((PixelData[i] & 0xFF000000) != 0xFF000000) {
+				IsFullyOpaque = false;
 				uint8_t* output = (uint8_t*)(PixelData.data() + i);
 				uint8_t alpha = output[3] + 1;
 				output[0] = (uint8_t)((alpha * output[0]) >> 8);

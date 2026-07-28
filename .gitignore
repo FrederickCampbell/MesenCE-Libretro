@@ -107,6 +107,7 @@ FdsBios.bin
 /RELEASE_NOTES_HD_GAMEPLAY_SCROLL_V111.md
 
 # Archives and local backups
+/_Backups/
 *.7z
 *.rar
 *.backup-*

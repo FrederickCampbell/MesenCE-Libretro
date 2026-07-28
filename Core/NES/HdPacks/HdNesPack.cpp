@@ -1,5 +1,6 @@
 #include "pch.h"
 #include <algorithm>
+#include <cmath>
 #include <unordered_map>
 #include "NES/HdPacks/HdNesPack.h"
 #include "NES/HdPacks/HdPackLoader.h"
@@ -131,75 +132,256 @@ void HdNesPack<scale>::DrawColor(uint32_t color, uint32_t* outputBuffer, uint32_
 
 template<uint32_t scale>
 template<HdPackBlendMode blendMode>
-void HdNesPack<scale>::DrawCustomBackground(HdBackgroundInfo& bgInfo, uint32_t* outputBuffer, int32_t x, int32_t y, uint32_t screenWidth)
+void HdNesPack<scale>::DrawBackgroundSpan(const HdBgConfig& bgConfig, uint32_t* source, uint32_t* destination, uint32_t count)
 {
-	// Background wrap is evaluated in native NES pixels. The selected native
-	// pixel is then expanded to the pack scale exactly like a normal HD layer.
-	int32_t sourceWidth = (int32_t)(bgInfo.Data->Width / scale) - (int32_t)bgInfo.Left;
-	int32_t sourceHeight = (int32_t)(bgInfo.Data->Height / scale) - (int32_t)bgInfo.Top;
-	if(sourceWidth <= 0 || sourceHeight <= 0) {
-		return;
+	// HD GAMEPLAY BULK STRIP COMPOSITOR V111S4
+	// Shared contiguous-span kernel used by both the old 8x8 fallback renderer
+	// and the new full-width strip renderer.
+	HdBackgroundInfo& bgInfo = *bgConfig.Background;
+	if constexpr(blendMode == HdPackBlendMode::Alpha) {
+		if(bgConfig.BgFastOpaqueCopy) {
+			memcpy(destination, source, count * sizeof(uint32_t));
+			return;
+		}
 	}
 
-	bool repeatX = bgInfo.WrapMode == HdBackgroundWrapMode::RepeatX || bgInfo.WrapMode == HdBackgroundWrapMode::RepeatXY;
-	bool repeatY = bgInfo.WrapMode == HdBackgroundWrapMode::RepeatY || bgInfo.WrapMode == HdBackgroundWrapMode::RepeatXY;
-	auto positiveModulo = [](int32_t value, int32_t modulus) {
-		int32_t result = value % modulus;
-		return result < 0 ? result + modulus : result;
-	};
-
-	if(repeatX) {
-		x = positiveModulo(x, sourceWidth);
-	} else if(x < 0 || x >= sourceWidth) {
-		return;
-	}
-	if(repeatY) {
-		y = positiveModulo(y, sourceHeight);
-	} else if(y < 0 || y >= sourceHeight) {
-		return;
-	}
-
-	uint32_t width = bgInfo.Data->Width;
-	uint32_t* pngData = bgInfo.data()
-		+ (((uint32_t)bgInfo.Top + (uint32_t)y) * scale * width)
-		+ (((uint32_t)bgInfo.Left + (uint32_t)x) * scale);
 	if(bgInfo.Brightness == 255) {
-		for(uint32_t i = 0; i < scale; i++) {
-			for(uint32_t j = 0; j < scale; j++) {
-				uint32_t pixelColor = pngData[j];
-				if constexpr(blendMode == HdPackBlendMode::Alpha) {
-					if(pixelColor >= 0xFF000000) {
-						outputBuffer[j] = pixelColor;
-					} else if(pixelColor >= 0x01000000) {
-						BlendColors<blendMode>((uint8_t*)(outputBuffer + j), (uint8_t*)(&pixelColor));
-					}
-				} else {
-					BlendColors<blendMode>((uint8_t*)(outputBuffer + j), (uint8_t*)(&pixelColor));
+		for(uint32_t i = 0; i < count; i++) {
+			uint32_t pixelColor = source[i];
+			if constexpr(blendMode == HdPackBlendMode::Alpha) {
+				if(pixelColor >= 0xFF000000) {
+					destination[i] = pixelColor;
+				} else if(pixelColor >= 0x01000000) {
+					BlendColors<blendMode>((uint8_t*)(destination + i), (uint8_t*)(&pixelColor));
 				}
+			} else {
+				BlendColors<blendMode>((uint8_t*)(destination + i), (uint8_t*)(&pixelColor));
 			}
-			outputBuffer += screenWidth;
-			pngData += width;
 		}
 	} else {
-		for(uint32_t i = 0; i < scale; i++) {
-			for(uint32_t j = 0; j < scale; j++) {
-				uint32_t pixelColor = AdjustBrightness((uint8_t*)(pngData + j), bgInfo.Brightness);
-				if constexpr(blendMode == HdPackBlendMode::Alpha) {
-					if(pixelColor >= 0xFF000000) {
-						outputBuffer[j] = pixelColor;
-					} else if(pixelColor >= 0x01000000) {
-						BlendColors<blendMode>((uint8_t*)(outputBuffer + j), (uint8_t*)(&pixelColor));
-					}
-				} else {
-					BlendColors<blendMode>((uint8_t*)(outputBuffer + j), (uint8_t*)(&pixelColor));
+		for(uint32_t i = 0; i < count; i++) {
+			uint32_t pixelColor = AdjustBrightness((uint8_t*)(source + i), bgInfo.Brightness);
+			if constexpr(blendMode == HdPackBlendMode::Alpha) {
+				if(pixelColor >= 0xFF000000) {
+					destination[i] = pixelColor;
+				} else if(pixelColor >= 0x01000000) {
+					BlendColors<blendMode>((uint8_t*)(destination + i), (uint8_t*)(&pixelColor));
 				}
+			} else {
+				BlendColors<blendMode>((uint8_t*)(destination + i), (uint8_t*)(&pixelColor));
 			}
-			outputBuffer += screenWidth;
-			pngData += width;
 		}
 	}
 }
 
+template<uint32_t scale>
+template<HdPackBlendMode blendMode>
+void HdNesPack<scale>::DrawCustomBackground(const HdBgConfig& bgConfig, uint32_t* outputBuffer, int32_t xHd, int32_t yHd, uint32_t screenWidth)
+{
+	// V111S3-compatible 8x8 fallback. The expensive path remains available for
+	// unusual priorities, non-Gameplay layers, and non-repeating backgrounds.
+	if(bgConfig.Background == nullptr || bgConfig.BgPixels == nullptr
+		|| bgConfig.BgSourceWidthHd <= 0 || bgConfig.BgSourceHeightHd <= 0) {
+		return;
+	}
+
+	if(bgConfig.BgRepeatX) {
+		if((uint32_t)xHd >= (uint32_t)bgConfig.BgSourceWidthHd) {
+			xHd %= bgConfig.BgSourceWidthHd;
+			if(xHd < 0) {
+				xHd += bgConfig.BgSourceWidthHd;
+			}
+		}
+	} else if(xHd < 0 || xHd + (int32_t)scale > bgConfig.BgSourceWidthHd) {
+		return;
+	}
+
+	if(bgConfig.BgRepeatY) {
+		if((uint32_t)yHd >= (uint32_t)bgConfig.BgSourceHeightHd) {
+			yHd %= bgConfig.BgSourceHeightHd;
+			if(yHd < 0) {
+				yHd += bgConfig.BgSourceHeightHd;
+			}
+		}
+	} else if(yHd < 0 || yHd + (int32_t)scale > bgConfig.BgSourceHeightHd) {
+		return;
+	}
+
+	int32_t sourceYHd = yHd;
+	for(uint32_t row = 0; row < scale; row++) {
+		uint32_t* sourceRow = bgConfig.BgPixels
+			+ ((bgConfig.BgSourceTopHd + sourceYHd) * bgConfig.BgPngWidth)
+			+ bgConfig.BgSourceLeftHd;
+
+		uint32_t remaining = scale;
+		int32_t sourceXHd = xHd;
+		uint32_t* destination = outputBuffer;
+		while(remaining > 0) {
+			uint32_t span = remaining;
+			if(bgConfig.BgRepeatX) {
+				span = std::min<uint32_t>(remaining, (uint32_t)(bgConfig.BgSourceWidthHd - sourceXHd));
+			}
+			DrawBackgroundSpan<blendMode>(bgConfig, sourceRow + sourceXHd, destination, span);
+			remaining -= span;
+			destination += span;
+			sourceXHd = 0;
+		}
+
+		outputBuffer += screenWidth;
+		sourceYHd++;
+		if(bgConfig.BgRepeatY && sourceYHd >= bgConfig.BgSourceHeightHd) {
+			sourceYHd = 0;
+		}
+	}
+}
+
+template<uint32_t scale>
+bool HdNesPack<scale>::CanBulkRenderBehindBgSprites()
+{
+	if(!_bulkParallaxEnabled || !_useLightweightPriorityCompositor || _activeBgCount[0] == 0) {
+		return false;
+	}
+
+	for(int i = 0; i < _activeBgCount[0]; i++) {
+		const HdBgConfig& cfg = _bgConfig[HdNesPack::BehindBgSpritesPriority + i];
+		if(cfg.Background == nullptr
+			|| cfg.Background->ScrollMode != HdBackgroundScrollMode::Gameplay
+			|| !cfg.BgRepeatX
+			|| cfg.BgMinX != 0
+			|| cfg.BgMaxX != NesConstants::ScreenWidth - 1
+			|| cfg.BgSourceWidthHd <= 0
+			|| cfg.BgSourceHeightHd <= 0) {
+			return false;
+		}
+	}
+	return true;
+}
+
+template<uint32_t scale>
+template<HdPackBlendMode blendMode>
+void HdNesPack<scale>::DrawBulkBackgroundLayer(
+	const HdBgConfig& bgConfig,
+	uint32_t* outputBuffer,
+	uint32_t screenWidth,
+	uint32_t xStart,
+	uint32_t xEnd
+)
+{
+	if(bgConfig.Background == nullptr || bgConfig.BgPixels == nullptr || xEnd <= xStart) {
+		return;
+	}
+
+	uint32_t widthHd = (xEnd - xStart) * scale;
+	int32_t sourceYHd = bgConfig.BgSourceYHd;
+	int32_t initialSourceXHd = bgConfig.BgSourceXHd[xStart];
+	if(!bgConfig.BgRepeatY
+		&& (sourceYHd < 0 || sourceYHd + (int32_t)scale > bgConfig.BgSourceHeightHd)) {
+		return;
+	}
+
+	for(uint32_t row = 0; row < scale; row++) {
+
+		uint32_t* sourceRow = bgConfig.BgPixels
+			+ ((bgConfig.BgSourceTopHd + sourceYHd) * bgConfig.BgPngWidth)
+			+ bgConfig.BgSourceLeftHd;
+
+		uint32_t remaining = widthHd;
+		int32_t sourceXHd = initialSourceXHd;
+		uint32_t* destination = outputBuffer;
+		while(remaining > 0) {
+			uint32_t span = std::min<uint32_t>(
+				remaining,
+				(uint32_t)(bgConfig.BgSourceWidthHd - sourceXHd)
+			);
+			DrawBackgroundSpan<blendMode>(
+				bgConfig,
+				sourceRow + sourceXHd,
+				destination,
+				span
+			);
+			remaining -= span;
+			destination += span;
+			sourceXHd = 0;
+		}
+
+		outputBuffer += screenWidth;
+		sourceYHd++;
+		if(bgConfig.BgRepeatY && sourceYHd >= bgConfig.BgSourceHeightHd) {
+			sourceYHd = 0;
+		}
+	}
+}
+
+template<uint32_t scale>
+void HdNesPack<scale>::DrawBulkBehindBgSpritesLine(
+	uint32_t y,
+	uint32_t* outputBuffer,
+	uint32_t screenWidth,
+	uint32_t xStart,
+	uint32_t xEnd
+)
+{
+	if(xEnd <= xStart) {
+		return;
+	}
+
+	// Build the native PPU backdrop once for the first HD row, coalescing runs
+	// of identical colors, then duplicate that row to the remaining scale rows.
+	uint32_t outputXHd = 0;
+	uint32_t x = xStart;
+	while(x < xEnd) {
+		uint32_t color = _palette[
+			_hdScreenInfo->ScreenTiles[(y << 8) | x].Tile.PpuBackgroundColor
+		];
+		uint32_t runEnd = x + 1;
+		while(runEnd < xEnd
+			&& _palette[
+				_hdScreenInfo->ScreenTiles[(y << 8) | runEnd].Tile.PpuBackgroundColor
+			] == color) {
+			runEnd++;
+		}
+
+		uint32_t runWidthHd = (runEnd - x) * scale;
+		std::fill(
+			outputBuffer + outputXHd,
+			outputBuffer + outputXHd + runWidthHd,
+			color
+		);
+		outputXHd += runWidthHd;
+		x = runEnd;
+	}
+
+	uint32_t visibleWidthHd = (xEnd - xStart) * scale;
+	for(uint32_t row = 1; row < scale; row++) {
+		memcpy(
+			outputBuffer + row * screenWidth,
+			outputBuffer,
+			visibleWidthHd * sizeof(uint32_t)
+		);
+	}
+
+	// Draw each lowest-priority background as long sequential source spans.
+	for(int i = 0; i < _activeBgCount[0]; i++) {
+		const HdBgConfig& cfg = _bgConfig[HdNesPack::BehindBgSpritesPriority + i];
+		switch(cfg.Background->BlendMode) {
+			case HdPackBlendMode::Alpha:
+				DrawBulkBackgroundLayer<HdPackBlendMode::Alpha>(
+					cfg, outputBuffer, screenWidth, xStart, xEnd
+				);
+				break;
+			case HdPackBlendMode::Add:
+				DrawBulkBackgroundLayer<HdPackBlendMode::Add>(
+					cfg, outputBuffer, screenWidth, xStart, xEnd
+				);
+				break;
+			case HdPackBlendMode::Subtract:
+				DrawBulkBackgroundLayer<HdPackBlendMode::Subtract>(
+					cfg, outputBuffer, screenWidth, xStart, xEnd
+				);
+				break;
+		}
+	}
+}
 template<uint32_t scale>
 void HdNesPack<scale>::DrawTile(HdPpuTileInfo& tileInfo, HdPackTileInfo& hdPackTileInfo, uint32_t* outputBuffer, uint32_t screenWidth)
 {
@@ -309,6 +491,75 @@ void HdNesPack<scale>::OnLineStart(HdPpuPixelInfo& lineFirstPixel, uint8_t y)
 			cfg.BgScrollX = (int32_t)(horizontalScroll * bgInfo.HorizontalScrollRatio);
 			cfg.BgScrollY = (int32_t)(selectedScrollY * bgInfo.VerticalScrollRatio);
 
+			// HD GAMEPLAY SPAN FAST PATH V111S3
+			// Preserve sub-NES-pixel motion, but prepare all repeating coordinates
+			// once per scanline rather than wrapping every rendered pixel.
+			cfg.BgScrollXHd = gameplayScroll && repeatX
+				? (int32_t)std::lround((double)horizontalScroll * bgInfo.HorizontalScrollRatio * (double)scale)
+				: cfg.BgScrollX * (int32_t)scale;
+			cfg.BgScrollYHd = gameplayScroll && repeatY
+				? (int32_t)std::lround((double)selectedScrollY * bgInfo.VerticalScrollRatio * (double)scale)
+				: cfg.BgScrollY * (int32_t)scale;
+
+			cfg.Background = &bgInfo;
+			cfg.BgPixels = bgInfo.data();
+			cfg.BgPngWidth = (int32_t)bgInfo.Data->Width;
+			cfg.BgSourceLeftHd = (int32_t)bgInfo.Left * (int32_t)scale;
+			cfg.BgSourceTopHd = (int32_t)bgInfo.Top * (int32_t)scale;
+			cfg.BgSourceWidthHd = cfg.BgPngWidth - cfg.BgSourceLeftHd;
+			cfg.BgSourceHeightHd = (int32_t)bgInfo.Data->Height - cfg.BgSourceTopHd;
+			cfg.BgRepeatX = repeatX;
+			cfg.BgRepeatY = repeatY;
+			cfg.BgFastOpaqueCopy = bgInfo.BlendMode == HdPackBlendMode::Alpha
+				&& bgInfo.Brightness == 255
+				&& bgInfo.Data->IsFullyOpaque;
+
+			auto normalizeHdCoordinate = [](int32_t value, int32_t size) {
+				if(size <= 0) {
+					return 0;
+				}
+				if((uint32_t)value < (uint32_t)size) {
+					return value;
+				}
+				if(value >= size) {
+					value -= size;
+					if(value < size) {
+						return value;
+					}
+				} else {
+					value += size;
+					if(value >= 0) {
+						return value;
+					}
+				}
+				value %= size;
+				return value < 0 ? value + size : value;
+			};
+
+			if(repeatX && cfg.BgSourceWidthHd > 0) {
+				cfg.BgScrollXHd = normalizeHdCoordinate(cfg.BgScrollXHd, cfg.BgSourceWidthHd);
+			}
+			if(repeatY && cfg.BgSourceHeightHd > 0) {
+				cfg.BgScrollYHd = normalizeHdCoordinate(cfg.BgScrollYHd, cfg.BgSourceHeightHd);
+			}
+
+			int32_t preparedXHd = cfg.BgScrollXHd;
+			for(int32_t screenX = 0; screenX < NesConstants::ScreenWidth; screenX++) {
+				cfg.BgSourceXHd[screenX] = preparedXHd;
+				preparedXHd += (int32_t)scale;
+				if(repeatX && cfg.BgSourceWidthHd > 0 && preparedXHd >= cfg.BgSourceWidthHd) {
+					preparedXHd -= cfg.BgSourceWidthHd;
+					if(preparedXHd >= cfg.BgSourceWidthHd) {
+						preparedXHd %= cfg.BgSourceWidthHd;
+					}
+				}
+			}
+
+			cfg.BgSourceYHd = ((int32_t)y * (int32_t)scale) + cfg.BgScrollYHd;
+			if(repeatY && cfg.BgSourceHeightHd > 0) {
+				cfg.BgSourceYHd = normalizeHdCoordinate(cfg.BgSourceYHd, cfg.BgSourceHeightHd);
+			}
+
 			int32_t sourceWidth = (int32_t)(bgInfo.Data->Width / scale) - (int32_t)bgInfo.Left;
 			int32_t sourceHeight = (int32_t)(bgInfo.Data->Height / scale) - (int32_t)bgInfo.Top;
 			bool verticalVisible = repeatY || (y >= -cfg.BgScrollY && (y + bgInfo.Top + cfg.BgScrollY + 1) * scale <= bgInfo.Data->Height);
@@ -354,6 +605,13 @@ void HdNesPack<scale>::OnBeforeApplyFilter()
 	string mode = modeRaw ? modeRaw : "lightweight";
 	_useLightweightPriorityCompositor = mode != "legacy";
 	_lightweightPriorityDiagnostics = mode == "diagnostics";
+
+	// HD GAMEPLAY BULK STRIP COMPOSITOR V111S4
+	// Default on; set to 0 for an exact runtime A/B comparison with V111S3.
+	const char* bulkRaw = getenv("MESENCE_HD_BULK_PARALLAX");
+	_bulkParallaxEnabled = bulkRaw == nullptr || string(bulkRaw) != "0";
+	_bulkBehindBgSpritesReady = false;
+
 	_syntheticSpritesByPixel.clear();
 
 	// Synthetic rule matches depend on the current frame state.
@@ -627,19 +885,18 @@ HdPackTileInfo* HdNesPack<scale>::GetMatchingTile(uint32_t x, uint32_t y, HdPpuT
 template<uint32_t scale>
 void HdNesPack<scale>::DrawBackgroundLayer(uint8_t priority, uint32_t x, uint32_t y, uint32_t* outputBuffer, uint32_t screenWidth)
 {
-	HdBgConfig bgConfig = _bgConfig[(int)priority];
-	if((int32_t)x >= bgConfig.BgMinX && (int32_t)x <= bgConfig.BgMaxX) {
-		HdBackgroundInfo& bgInfo = _hdData->BackgroundsByPriority[bgConfig.BgPriority][bgConfig.BackgroundIndex];
-		int32_t sourceX = (int32_t)x + bgConfig.BgScrollX;
-		int32_t sourceY = (int32_t)y + bgConfig.BgScrollY;
+	const HdBgConfig& bgConfig = _bgConfig[(int)priority];
+	if((int32_t)x >= bgConfig.BgMinX && (int32_t)x <= bgConfig.BgMaxX && bgConfig.Background != nullptr) {
+		HdBackgroundInfo& bgInfo = *bgConfig.Background;
+		int32_t sourceXHd = bgConfig.BgSourceXHd[x];
+		int32_t sourceYHd = bgConfig.BgSourceYHd;
 		switch(bgInfo.BlendMode) {
-			case HdPackBlendMode::Alpha: DrawCustomBackground<HdPackBlendMode::Alpha>(bgInfo, outputBuffer, sourceX, sourceY, screenWidth); break;
-			case HdPackBlendMode::Add: DrawCustomBackground<HdPackBlendMode::Add>(bgInfo, outputBuffer, sourceX, sourceY, screenWidth); break;
-			case HdPackBlendMode::Subtract: DrawCustomBackground<HdPackBlendMode::Subtract>(bgInfo, outputBuffer, sourceX, sourceY, screenWidth); break;
+			case HdPackBlendMode::Alpha: DrawCustomBackground<HdPackBlendMode::Alpha>(bgConfig, outputBuffer, sourceXHd, sourceYHd, screenWidth); break;
+			case HdPackBlendMode::Add: DrawCustomBackground<HdPackBlendMode::Add>(bgConfig, outputBuffer, sourceXHd, sourceYHd, screenWidth); break;
+			case HdPackBlendMode::Subtract: DrawCustomBackground<HdPackBlendMode::Subtract>(bgConfig, outputBuffer, sourceXHd, sourceYHd, screenWidth); break;
 		}
 	}
 }
-
 template<uint32_t scale>
 void HdNesPack<scale>::GetPixels(uint32_t x, uint32_t y, HdPpuPixelInfo& pixelInfo, uint32_t* outputBuffer, uint32_t screenWidth)
 {
@@ -787,10 +1044,11 @@ void HdNesPack<scale>::GetPixels(uint32_t x, uint32_t y, HdPpuPixelInfo& pixelIn
 		}
 	};
 
-	DrawColor(_palette[pixelInfo.Tile.PpuBackgroundColor], outputBuffer, screenWidth);
-
-	for(int i = 0; i < _activeBgCount[0]; i++) {
-		DrawBackgroundLayer(HdNesPack::BehindBgSpritesPriority + i, x, y, outputBuffer, screenWidth);
+	if(!_bulkBehindBgSpritesReady) {
+		DrawColor(_palette[pixelInfo.Tile.PpuBackgroundColor], outputBuffer, screenWidth);
+		for(int i = 0; i < _activeBgCount[0]; i++) {
+			DrawBackgroundLayer(HdNesPack::BehindBgSpritesPriority + i, x, y, outputBuffer, screenWidth);
+		}
 	}
 
 	drawCandidateList(bgSprites, bgCount);
@@ -882,6 +1140,21 @@ void HdNesPack<scale>::Process(HdScreenInfo* hdScreenInfo, uint32_t* outputBuffe
 		OnLineStart(hdScreenInfo->ScreenTiles[i << 8], i);
 		uint32_t bufferIndex = (i - overscan.Top) * screenWidth * hdScale;
 		uint32_t lineStartIndex = bufferIndex;
+
+		// HD GAMEPLAY BULK STRIP COMPOSITOR V111S4
+		// Precompose the full lowest-priority stack once, then GetPixels handles
+		// only background sprites, tiles, foreground sprites, and higher layers.
+		_bulkBehindBgSpritesReady = CanBulkRenderBehindBgSprites();
+		if(_bulkBehindBgSpritesReady) {
+			DrawBulkBehindBgSpritesLine(
+				i,
+				outputBuffer + lineStartIndex,
+				screenWidth,
+				overscan.Left,
+				256 - overscan.Right
+			);
+		}
+
 		for(uint32_t j = overscan.Left, jMax = 256 - overscan.Right; j < jMax; j++) {
 			GetPixels(j, i, hdScreenInfo->ScreenTiles[i * 256 + j], outputBuffer + bufferIndex, screenWidth);
 			bufferIndex += hdScale;
