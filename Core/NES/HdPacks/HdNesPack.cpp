@@ -973,19 +973,20 @@ void HdNesPack<scale>::GetPixels(uint32_t x, uint32_t y, HdPpuPixelInfo& pixelIn
 	}
 
 	static constexpr int MaxLocalCandidates = 64;
+	static constexpr int InsertionSortCandidateLimit = 16;
 
+	// MESENCE_HD_CANDIDATE_HOTPATH_V1
+	// Count bounds every access, so unused entries do not need initialization.
+	// Deep identity hashes are generated only for genuine priority ties.
 	struct LocalCandidate {
-		HdPpuTileInfo* Tile = nullptr;
-		HdPackTileInfo* HdTile = nullptr;
-		bool Synthetic = false;
-		uint32_t NativeKey = 0;
-		uint32_t TargetKey = 0;
-		uint32_t StateKey = 0;
-		uint16_t SourceOrder = 0;
+		HdPpuTileInfo* Tile;
+		HdPackTileInfo* HdTile;
+		bool Synthetic;
+		uint16_t SourceOrder;
 	};
 
-	LocalCandidate bgSprites[MaxLocalCandidates] = {};
-	LocalCandidate fgSprites[MaxLocalCandidates] = {};
+	LocalCandidate bgSprites[MaxLocalCandidates];
+	LocalCandidate fgSprites[MaxLocalCandidates];
 	int bgCount = 0;
 	int fgCount = 0;
 	uint16_t sourceOrder = 0;
@@ -1043,9 +1044,6 @@ void HdNesPack<scale>::GetPixels(uint32_t x, uint32_t y, HdPpuPixelInfo& pixelIn
 		candidate.Tile = tile;
 		candidate.HdTile = hdTile;
 		candidate.Synthetic = synthetic;
-		candidate.NativeKey = tile->GetHashCode();
-		candidate.TargetKey = buildTargetKey(hdTile);
-		candidate.StateKey = buildStateKey(tile);
 		candidate.SourceOrder = sourceOrder++;
 		_candidateHighWatermark = std::max<uint32_t>(
 			_candidateHighWatermark,
@@ -1074,36 +1072,70 @@ void HdNesPack<scale>::GetPixels(uint32_t x, uint32_t y, HdPpuPixelInfo& pixelIn
 		}
 	}
 
-	auto sortCandidates = [](LocalCandidate* bucket, int count) {
-		std::sort(bucket, bucket + count, [](const LocalCandidate& a, const LocalCandidate& b) {
-			// Candidates are drawn from first to last, so lower NES OAM/root
-			// indexes sort later and remain visually on top.
-			if(a.Tile->RootSpriteIndex != b.Tile->RootSpriteIndex) {
-				return a.Tile->RootSpriteIndex > b.Tile->RootSpriteIndex;
+	auto candidateLess = [&](const LocalCandidate& a, const LocalCandidate& b) {
+		// Candidates are drawn from first to last, so lower NES OAM/root
+		// indexes sort later and remain visually on top.
+		if(a.Tile->RootSpriteIndex != b.Tile->RootSpriteIndex) {
+			return a.Tile->RootSpriteIndex > b.Tile->RootSpriteIndex;
+		}
+		if(a.Tile->SpritePriorityRank != b.Tile->SpritePriorityRank) {
+			return a.Tile->SpritePriorityRank > b.Tile->SpritePriorityRank;
+		}
+		// Synthetic pieces stay directly behind their native root tile.
+		if(a.Synthetic != b.Synthetic) {
+			return a.Synthetic && !b.Synthetic;
+		}
+		if(a.Tile->ProvenanceId != b.Tile->ProvenanceId) {
+			return a.Tile->ProvenanceId > b.Tile->ProvenanceId;
+		}
+
+		// These keys are rare tie-breakers. Computing them here avoids doing
+		// several hashes for every ordinary candidate.
+		uint32_t aNativeKey = a.Tile->GetHashCode();
+		uint32_t bNativeKey = b.Tile->GetHashCode();
+		if(aNativeKey != bNativeKey) {
+			return aNativeKey > bNativeKey;
+		}
+
+		uint32_t aTargetKey = buildTargetKey(a.HdTile);
+		uint32_t bTargetKey = buildTargetKey(b.HdTile);
+		if(aTargetKey != bTargetKey) {
+			return aTargetKey > bTargetKey;
+		}
+
+		uint32_t aStateKey = buildStateKey(a.Tile);
+		uint32_t bStateKey = buildStateKey(b.Tile);
+		if(aStateKey != bStateKey) {
+			return aStateKey > bStateKey;
+		}
+
+		// Final total-order key. If every visual identity key is equal, this
+		// preserves the legacy low-source-index-wins behavior.
+		return a.SourceOrder > b.SourceOrder;
+	};
+
+	auto sortCandidates = [&](LocalCandidate* bucket, int count) {
+		if(count < 2) {
+			return;
+		}
+
+		if(count <= InsertionSortCandidateLimit) {
+			for(int i = 1; i < count; i++) {
+				LocalCandidate candidate = bucket[i];
+				int position = i;
+				while(
+					position > 0
+					&& candidateLess(candidate, bucket[position - 1])
+				) {
+					bucket[position] = bucket[position - 1];
+					position--;
+				}
+				bucket[position] = candidate;
 			}
-			if(a.Tile->SpritePriorityRank != b.Tile->SpritePriorityRank) {
-				return a.Tile->SpritePriorityRank > b.Tile->SpritePriorityRank;
-			}
-			// Synthetic pieces stay directly behind their native root tile.
-			if(a.Synthetic != b.Synthetic) {
-				return a.Synthetic && !b.Synthetic;
-			}
-			if(a.Tile->ProvenanceId != b.Tile->ProvenanceId) {
-				return a.Tile->ProvenanceId > b.Tile->ProvenanceId;
-			}
-			if(a.NativeKey != b.NativeKey) {
-				return a.NativeKey > b.NativeKey;
-			}
-			if(a.TargetKey != b.TargetKey) {
-				return a.TargetKey > b.TargetKey;
-			}
-			if(a.StateKey != b.StateKey) {
-				return a.StateKey > b.StateKey;
-			}
-			// Final total-order key. If every visual identity key is equal, this
-			// preserves the legacy low-source-index-wins behavior.
-			return a.SourceOrder > b.SourceOrder;
-		});
+			return;
+		}
+
+		std::sort(bucket, bucket + count, candidateLess);
 	};
 
 	sortCandidates(bgSprites, bgCount);
