@@ -7,6 +7,7 @@
 #include <fstream>
 #include <vector>
 #include <iterator>
+#include <atomic>
 #include <cctype>
 #include <cstring>
 #include "LibretroKeyManager.h"
@@ -245,6 +246,27 @@ public:
 	uint64_t GetZeroWriteCount() const { return _zeroWriteCount; }
 	uint64_t GetDroppedFrameCount() const { return _droppedFrames; }
 
+	// MESENCE_AUDIO_FRONTEND_COOP_V1
+	void SetFrontendBufferStatus(bool active, unsigned occupancy, bool underrunLikely)
+	{
+		_frontendBufferActive.store(active, std::memory_order_relaxed);
+		_frontendOccupancy.store(std::min(occupancy, 100u), std::memory_order_relaxed);
+		_frontendUnderrunLikely.store(underrunLikely, std::memory_order_relaxed);
+		if(underrunLikely) {
+			_frontendUnderrunEvents.fetch_add(1, std::memory_order_relaxed);
+		}
+	}
+
+	unsigned GetFrontendOccupancy() const
+	{
+		return _frontendOccupancy.load(std::memory_order_relaxed);
+	}
+
+	uint64_t GetFrontendUnderrunEvents() const
+	{
+		return _frontendUnderrunEvents.load(std::memory_order_relaxed);
+	}
+
 private:
 	static constexpr size_t MaxPendingFrames = 8192;
 	static constexpr size_t ResumePendingFrames = 1024;
@@ -257,6 +279,10 @@ private:
 	uint64_t _shortWriteCount = 0;
 	uint64_t _zeroWriteCount = 0;
 	uint64_t _droppedFrames = 0;
+	std::atomic<bool> _frontendBufferActive { true };
+	std::atomic<unsigned> _frontendOccupancy { 0 };
+	std::atomic<bool> _frontendUnderrunLikely { false };
+	std::atomic<uint64_t> _frontendUnderrunEvents { 0 };
 
 	void PushFrame(int16_t left, int16_t right)
 	{
@@ -349,6 +375,17 @@ private:
 };
 
 static std::unique_ptr<LibretroAudioDevice> _audioDevice;
+
+static void RETRO_CALLCONV LibretroAudioBufferStatus(
+	bool active,
+	unsigned occupancy,
+	bool underrunLikely
+)
+{
+	if(_audioDevice) {
+		_audioDevice->SetFrontendBufferStatus(active, occupancy, underrunLikely);
+	}
+}
 
 static constexpr const char* MesenNtscFilter = "mesen_ntsc_filter";
 static constexpr const char* MesenPalette = "mesen_palette";
@@ -484,10 +521,15 @@ extern "C" {
 		// Map sample rate into the new EmuSettings API
 		AudioConfig ac = _emu->GetSettings()->GetAudioConfig();
 		ac.SampleRate = _audioSampleRate;
+		// RetroArch owns audio/video synchronization for a libretro core.
+		ac.DisableDynamicSampleRate = true;
 		_emu->GetSettings()->SetAudioConfig(ac);
 
 		// Create libretro audio device so we can register it later once a ROM is loaded
 		_audioDevice.reset(new LibretroAudioDevice());
+		retro_audio_buffer_status_callback audioStatus = {};
+		audioStatus.callback = LibretroAudioBufferStatus;
+		env_cb(RETRO_ENVIRONMENT_SET_AUDIO_BUFFER_STATUS_CALLBACK, &audioStatus);
 
 		// NOTE: many NES-specific flags moved into NesConfig inside EmuSettings.
 		// Example: to set FDS auto-load you'd edit NesConfig and call SetNesConfig.
@@ -1091,6 +1133,7 @@ void libretro_probe_inputs(const char* tag)
 			nesCfg.ChannelPanning[i] = (uint32_t)(int32_t)std::max(-100, std::min(100, integerValue(MesenChannelPanningKeys[i], 0)));
 		}
 		audioCfg.SampleRate = 48000;
+		audioCfg.DisableDynamicSampleRate = true;
 
 		// Input
 		int turboSpeed = 1;
@@ -1200,10 +1243,8 @@ void libretro_probe_inputs(const char* tag)
 
 	bool updated = false;
 	if(env_cb(RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE, &updated) && updated) {
-		// Audio format/channel options may recreate the frontend audio path.
-		if(_audioDevice) {
-			_audioDevice->ClearPending();
-		}
+		// Preserve accepted sample continuity for unrelated option changes.
+		// New audio settings naturally affect subsequently generated samples.
 		update_settings();
 	}
 
