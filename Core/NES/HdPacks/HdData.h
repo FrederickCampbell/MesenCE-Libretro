@@ -94,11 +94,6 @@ struct HdPpuTileInfo : public HdTileKey
 	bool VerticalMirroring = false;
 	bool BackgroundPriority = false;
 	bool IsSyntheticAddition = false;
-	// MESENCE_HD_NATIVE_OWNERSHIP_V1
-	// Runtime compositor metadata; excluded from tile matching.
-	bool IsNativeOwner = false;
-	uint8_t SourceSpriteIndex = 0xFF;
-	uint8_t SpriteXPosition = 0;
 	uint8_t RootSpriteIndex = 0xFF;
 	uint8_t SpritePriorityRank = 0xFF;
 	uint32_t ProvenanceId = 0;
@@ -128,7 +123,8 @@ struct HdScreenInfo
 	HdPpuPixelInfo* ScreenTiles;
 	unordered_map<uint32_t, uint8_t> WatchedAddressValues;
 	uint32_t FrameNumber = 0;
-
+	uint64_t StableObjectPriorityByOam[64] = {};
+	uint16_t StableObjectSortKeyByOam[64] = {};
 	HdScreenInfo(const HdScreenInfo& that) = delete;
 
 	HdScreenInfo(bool isChrRamGame)

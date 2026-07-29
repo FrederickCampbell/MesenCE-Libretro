@@ -273,10 +273,7 @@ void HdNesPack<scale>::DrawBulkBackgroundLayer(
 
 	uint32_t widthHd = (xEnd - xStart) * scale;
 	int32_t sourceYHd = bgConfig.BgSourceYHd;
-	int32_t initialSourceXHd = bgConfig.BgSourceStartXHd + (int32_t)xStart * (int32_t)scale;
-	if(initialSourceXHd >= bgConfig.BgSourceWidthHd) {
-		initialSourceXHd %= bgConfig.BgSourceWidthHd;
-	}
+	int32_t initialSourceXHd = bgConfig.BgSourceXHd[xStart];
 	if(!bgConfig.BgRepeatY
 		&& (sourceYHd < 0 || sourceYHd + (int32_t)scale > bgConfig.BgSourceHeightHd)) {
 		return;
@@ -460,6 +457,8 @@ void HdNesPack<scale>::OnLineStart(HdPpuPixelInfo& lineFirstPixel, uint8_t y)
 			delta += 512;
 		}
 
+		// A real camera moves only a few pixels per frame. A larger discontinuity
+		// is a level load, warp, rewind, or state load and should start fresh.
 		if(delta > 64 || delta < -64) {
 			_continuousScrollX[y] = rawScrollX;
 		} else {
@@ -473,46 +472,15 @@ void HdNesPack<scale>::OnLineStart(HdPpuPixelInfo& lineFirstPixel, uint8_t y)
 	_lastRawScrollX[y] = (uint16_t)rawScrollX;
 
 	int32_t scrollY = (((lineFirstPixel.TmpVideoRamAddr & 0x3E0) >> 2) | ((lineFirstPixel.TmpVideoRamAddr & 0x7000) >> 12)) + ((lineFirstPixel.TmpVideoRamAddr & 0x800) ? 240 : 0);
-
-	// MESENCE_HD_BACKGROUND_PREPARATION_V1
-	// Shared by all backgrounds on this scanline.
-	auto normalizeHdCoordinate = [](int32_t value, int32_t size) {
-		if(size <= 0) {
-			return 0;
-		}
-		if((uint32_t)value < (uint32_t)size) {
-			return value;
-		}
-		if(value >= size) {
-			value -= size;
-			if(value < size) {
-				return value;
-			}
-		} else {
-			value += size;
-			if(value >= 0) {
-				return value;
-			}
-		}
-		value %= size;
-		return value < 0 ? value + size : value;
-	};
-
-	// First pass: prepare metadata and visibility without building fallback
-	// coordinate tables.
 	for(int layer = 0; layer < 4; layer++) {
 		for(int i = 0; i < _activeBgCount[layer]; i++) {
 			HdBgConfig& cfg = _bgConfig[layer * HdNesPack::PriorityLevelsPerLayer + i];
 			if(cfg.BackgroundIndex < 0) {
-				cfg.Background = nullptr;
-				cfg.BgMinX = -1;
-				cfg.BgMaxX = -1;
 				continue;
 			}
 
 			HdBackgroundInfo& bgInfo = _hdData->BackgroundsByPriority[cfg.BgPriority][cfg.BackgroundIndex];
 			bgInfo.Data->Init();
-
 			bool repeatX = bgInfo.WrapMode == HdBackgroundWrapMode::RepeatX || bgInfo.WrapMode == HdBackgroundWrapMode::RepeatXY;
 			bool repeatY = bgInfo.WrapMode == HdBackgroundWrapMode::RepeatY || bgInfo.WrapMode == HdBackgroundWrapMode::RepeatXY;
 			bool gameplayScroll = bgInfo.ScrollMode == HdBackgroundScrollMode::Gameplay;
@@ -520,9 +488,12 @@ void HdNesPack<scale>::OnLineStart(HdPpuPixelInfo& lineFirstPixel, uint8_t y)
 			int32_t selectedContinuousScrollX = gameplayScroll ? _gameplayContinuousScrollX : continuousScrollX;
 			int32_t selectedScrollY = gameplayScroll ? _gameplayScrollY : scrollY;
 			int32_t horizontalScroll = repeatX ? selectedContinuousScrollX : selectedRawScrollX;
-
 			cfg.BgScrollX = (int32_t)(horizontalScroll * bgInfo.HorizontalScrollRatio);
 			cfg.BgScrollY = (int32_t)(selectedScrollY * bgInfo.VerticalScrollRatio);
+
+			// HD GAMEPLAY SPAN FAST PATH V111S3
+			// Preserve sub-NES-pixel motion, but prepare all repeating coordinates
+			// once per scanline rather than wrapping every rendered pixel.
 			cfg.BgScrollXHd = gameplayScroll && repeatX
 				? (int32_t)std::lround((double)horizontalScroll * bgInfo.HorizontalScrollRatio * (double)scale)
 				: cfg.BgScrollX * (int32_t)scale;
@@ -543,6 +514,28 @@ void HdNesPack<scale>::OnLineStart(HdPpuPixelInfo& lineFirstPixel, uint8_t y)
 				&& bgInfo.Brightness == 255
 				&& bgInfo.Data->IsFullyOpaque;
 
+			auto normalizeHdCoordinate = [](int32_t value, int32_t size) {
+				if(size <= 0) {
+					return 0;
+				}
+				if((uint32_t)value < (uint32_t)size) {
+					return value;
+				}
+				if(value >= size) {
+					value -= size;
+					if(value < size) {
+						return value;
+					}
+				} else {
+					value += size;
+					if(value >= 0) {
+						return value;
+					}
+				}
+				value %= size;
+				return value < 0 ? value + size : value;
+			};
+
 			if(repeatX && cfg.BgSourceWidthHd > 0) {
 				cfg.BgScrollXHd = normalizeHdCoordinate(cfg.BgScrollXHd, cfg.BgSourceWidthHd);
 			}
@@ -550,7 +543,18 @@ void HdNesPack<scale>::OnLineStart(HdPpuPixelInfo& lineFirstPixel, uint8_t y)
 				cfg.BgScrollYHd = normalizeHdCoordinate(cfg.BgScrollYHd, cfg.BgSourceHeightHd);
 			}
 
-			cfg.BgSourceStartXHd = cfg.BgScrollXHd;
+			int32_t preparedXHd = cfg.BgScrollXHd;
+			for(int32_t screenX = 0; screenX < NesConstants::ScreenWidth; screenX++) {
+				cfg.BgSourceXHd[screenX] = preparedXHd;
+				preparedXHd += (int32_t)scale;
+				if(repeatX && cfg.BgSourceWidthHd > 0 && preparedXHd >= cfg.BgSourceWidthHd) {
+					preparedXHd -= cfg.BgSourceWidthHd;
+					if(preparedXHd >= cfg.BgSourceWidthHd) {
+						preparedXHd %= cfg.BgSourceWidthHd;
+					}
+				}
+			}
+
 			cfg.BgSourceYHd = ((int32_t)y * (int32_t)scale) + cfg.BgScrollYHd;
 			if(repeatY && cfg.BgSourceHeightHd > 0) {
 				cfg.BgSourceYHd = normalizeHdCoordinate(cfg.BgSourceYHd, cfg.BgSourceHeightHd);
@@ -570,46 +574,6 @@ void HdNesPack<scale>::OnLineStart(HdPpuPixelInfo& lineFirstPixel, uint8_t y)
 			} else {
 				cfg.BgMinX = -1;
 				cfg.BgMaxX = -1;
-			}
-		}
-	}
-
-	// Decide bulk rendering before preparing fallback-only X tables.
-	_bulkBehindBgSpritesReady = CanBulkRenderBehindBgSprites();
-
-	// Second pass: populate only the coordinate entries that the fallback
-	// renderer can read. Bulk group-0 backgrounds skip the table entirely.
-	for(int layer = 0; layer < 4; layer++) {
-		if(layer == 0 && _bulkBehindBgSpritesReady) {
-			continue;
-		}
-
-		for(int i = 0; i < _activeBgCount[layer]; i++) {
-			HdBgConfig& cfg = _bgConfig[layer * HdNesPack::PriorityLevelsPerLayer + i];
-			if(cfg.Background == nullptr || cfg.BgMinX > cfg.BgMaxX || cfg.BgSourceWidthHd <= 0) {
-				continue;
-			}
-
-			int32_t firstScreenX = std::max<int32_t>(0, cfg.BgMinX);
-			int32_t lastScreenX = std::min<int32_t>(NesConstants::ScreenWidth - 1, cfg.BgMaxX);
-			if(firstScreenX > lastScreenX) {
-				continue;
-			}
-
-			int32_t preparedXHd = cfg.BgSourceStartXHd + firstScreenX * (int32_t)scale;
-			if(cfg.BgRepeatX) {
-				preparedXHd = normalizeHdCoordinate(preparedXHd, cfg.BgSourceWidthHd);
-			}
-
-			for(int32_t screenX = firstScreenX; screenX <= lastScreenX; screenX++) {
-				cfg.BgSourceXHd[screenX] = preparedXHd;
-				preparedXHd += (int32_t)scale;
-				if(cfg.BgRepeatX && preparedXHd >= cfg.BgSourceWidthHd) {
-					preparedXHd -= cfg.BgSourceWidthHd;
-					if(preparedXHd >= cfg.BgSourceWidthHd) {
-						preparedXHd %= cfg.BgSourceWidthHd;
-					}
-				}
 			}
 		}
 	}
@@ -1008,83 +972,28 @@ void HdNesPack<scale>::GetPixels(uint32_t x, uint32_t y, HdPpuPixelInfo& pixelIn
 		hdPackTileInfo = GetCachedMatchingTile(x, y, &pixelInfo.Tile);
 	}
 
-	static constexpr int MaxLocalCandidates = 64;
-	static constexpr int InsertionSortCandidateLimit = 16;
-
-	// MESENCE_HD_CANDIDATE_HOTPATH_V1
-	// Count bounds every access, so unused entries do not need initialization.
-	// Deep identity hashes are generated only for genuine priority ties.
 	struct LocalCandidate {
-		HdPpuTileInfo* Tile;
-		HdPackTileInfo* HdTile;
-		bool Synthetic;
-		uint16_t SourceOrder;
-	};
+		HdPpuTileInfo* Tile = nullptr;
+		HdPackTileInfo* HdTile = nullptr;
+		bool Synthetic = false;
+		uint64_t StableObjectPriorityKey = 0xFFFFFFFFFFFFFFFFull;	};
 
-	LocalCandidate bgSprites[MaxLocalCandidates];
-	LocalCandidate fgSprites[MaxLocalCandidates];
+	LocalCandidate bgSprites[16] = {};
+	LocalCandidate fgSprites[16] = {};
 	int bgCount = 0;
 	int fgCount = 0;
-	uint16_t sourceOrder = 0;
-
-	auto mixStableKey = [](uint32_t hash, uint32_t value) {
-		hash ^= value;
-		hash *= 16777619u;
-		return hash;
-	};
-
-	auto buildTargetKey = [&](HdPackTileInfo* hdTile) {
-		if(!hdTile) {
-			return 0u;
-		}
-		uint32_t key = 2166136261u;
-		key = mixStableKey(key, hdTile->BitmapIndex);
-		key = mixStableKey(key, hdTile->X);
-		key = mixStableKey(key, hdTile->Y);
-		key = mixStableKey(key, hdTile->Width);
-		key = mixStableKey(key, hdTile->Height);
-		key = mixStableKey(key, (uint32_t)hdTile->Brightness);
-		return key;
-	};
-
-	auto buildStateKey = [&](HdPpuTileInfo* tile) {
-		uint32_t key = 2166136261u;
-		key = mixStableKey(key, tile->TileIndex);
-		key = mixStableKey(key, tile->PaletteColors);
-		key = mixStableKey(key, tile->OffsetX | ((uint32_t)tile->OffsetY << 8));
-		key = mixStableKey(
-			key,
-			(tile->HorizontalMirroring ? 1u : 0u)
-				| (tile->VerticalMirroring ? 2u : 0u)
-				| (tile->BackgroundPriority ? 4u : 0u)
-		);
-		return key;
-	};
 
 	auto pushCandidate = [&](LocalCandidate* bucket, int& count, HdPpuTileInfo* tile, HdPackTileInfo* hdTile, bool synthetic) {
-		if(count >= MaxLocalCandidates) {
-			_candidateOverflowCount++;
-			if(_lightweightPriorityDiagnostics && (
-				_candidateOverflowCount == 1
-				|| (_candidateOverflowCount % 1024) == 0
-			)) {
-				MessageManager::Log(
-					"[HDPack] Local sprite candidate capacity exceeded. total="
-					+ std::to_string(_candidateOverflowCount)
-				);
-			}
+		if(count >= 16) {
 			return;
 		}
-
-		LocalCandidate& candidate = bucket[count++];
-		candidate.Tile = tile;
-		candidate.HdTile = hdTile;
-		candidate.Synthetic = synthetic;
-		candidate.SourceOrder = sourceOrder++;
-		_candidateHighWatermark = std::max<uint32_t>(
-			_candidateHighWatermark,
-			(uint32_t)count
-		);
+		bucket[count].Tile = tile;
+		bucket[count].HdTile = hdTile;
+		bucket[count].Synthetic = synthetic;
+		uint8_t root = tile->RootSpriteIndex;
+		bucket[count].StableObjectPriorityKey = root < 64
+			? _hdScreenInfo->StableObjectPriorityByOam[root]
+			: 0xFFFFFFFFFFFFFFFFull;		count++;
 	};
 
 	for(uint8_t k = 0; k < pixelInfo.SpriteCount; k++) {
@@ -1108,161 +1017,26 @@ void HdNesPack<scale>::GetPixels(uint32_t x, uint32_t y, HdPpuPixelInfo& pixelIn
 		}
 	}
 
-
-	// MESENCE_HD_NATIVE_OWNERSHIP_V1
-	// Composite one native source group at an overlap pixel. Synthetic
-	// additions inherit SourceSpriteIndex and RootSpriteIndex via memcpy.
-	auto isBetterStableOwner = [](const LocalCandidate& candidate, const LocalCandidate& current) {
-		if(candidate.Synthetic != current.Synthetic) {
-			return !candidate.Synthetic;
-		}
-		if(candidate.Tile->RootSpriteIndex != current.Tile->RootSpriteIndex) {
-			return candidate.Tile->RootSpriteIndex < current.Tile->RootSpriteIndex;
-		}
-		if(candidate.Tile->SpritePriorityRank != current.Tile->SpritePriorityRank) {
-			return candidate.Tile->SpritePriorityRank < current.Tile->SpritePriorityRank;
-		}
-		if(candidate.Tile->SpriteXPosition != current.Tile->SpriteXPosition) {
-			return candidate.Tile->SpriteXPosition < current.Tile->SpriteXPosition;
-		}
-		if(candidate.Tile->TileIndex != current.Tile->TileIndex) {
-			return candidate.Tile->TileIndex < current.Tile->TileIndex;
-		}
-		if(candidate.Tile->PaletteColors != current.Tile->PaletteColors) {
-			return candidate.Tile->PaletteColors < current.Tile->PaletteColors;
-		}
-		if(candidate.Tile->SourceSpriteIndex != current.Tile->SourceSpriteIndex) {
-			return candidate.Tile->SourceSpriteIndex < current.Tile->SourceSpriteIndex;
-		}
-		return candidate.SourceOrder < current.SourceOrder;
+	auto sortCandidates = [](LocalCandidate* bucket, int count) {
+		std::stable_sort(bucket, bucket + count, [](const LocalCandidate& a, const LocalCandidate& b) {
+			// MESENCE_NATIVE_METASPRITE_OBJECT_LATCH_V62
+			if(a.StableObjectPriorityKey != b.StableObjectPriorityKey) {
+				return a.StableObjectPriorityKey > b.StableObjectPriorityKey;
+			}
+			if(a.Tile->SpritePriorityRank != b.Tile->SpritePriorityRank) {
+				return a.Tile->SpritePriorityRank > b.Tile->SpritePriorityRank;
+			}
+			if(a.Tile->RootSpriteIndex != b.Tile->RootSpriteIndex) {
+				return a.Tile->RootSpriteIndex > b.Tile->RootSpriteIndex;
+			}
+			if(a.Synthetic != b.Synthetic) {
+				return a.Synthetic && !b.Synthetic;
+			}
+			return a.Tile->ProvenanceId < b.Tile->ProvenanceId;
+		});
 	};
 
-	auto selectCandidateOwner = [&](LocalCandidate* bucket, int& count) {
-		if(count < 2) {
-			return;
-		}
-
-		int selected = -1;
-
-		// The exact native PPU winner is authoritative when available.
-		for(int i = 0; i < count; i++) {
-			if(!bucket[i].Synthetic
-				&& bucket[i].Tile->IsNativeOwner
-				&& bucket[i].Tile->SpriteColorIndex != 0
-				&& (selected < 0 || isBetterStableOwner(bucket[i], bucket[selected]))) {
-				selected = i;
-			}
-		}
-
-		// Oversized HD-only pixels have no native winner. Prefer a genuine
-		// source and choose it by stable sprite-evaluation identity.
-		if(selected < 0) {
-			for(int i = 0; i < count; i++) {
-				if(!bucket[i].Synthetic
-					&& (selected < 0 || isBetterStableOwner(bucket[i], bucket[selected]))) {
-					selected = i;
-				}
-			}
-		}
-		if(selected < 0) {
-			for(int i = 0; i < count; i++) {
-				if(selected < 0 || isBetterStableOwner(bucket[i], bucket[selected])) {
-					selected = i;
-				}
-			}
-		}
-		if(selected < 0) {
-			count = 0;
-			return;
-		}
-
-		uint8_t selectedSource = bucket[selected].Tile->SourceSpriteIndex;
-		uint8_t selectedRoot = bucket[selected].Tile->RootSpriteIndex;
-		int writeIndex = 0;
-
-		for(int i = 0; i < count; i++) {
-			bool sameOwner = selectedSource != 0xFF
-				? bucket[i].Tile->SourceSpriteIndex == selectedSource
-				: bucket[i].Tile->RootSpriteIndex == selectedRoot;
-			if(sameOwner) {
-				if(writeIndex != i) {
-					bucket[writeIndex] = bucket[i];
-				}
-				writeIndex++;
-			}
-		}
-		count = writeIndex;
-	};
-
-	auto candidateLess = [&](const LocalCandidate& a, const LocalCandidate& b) {
-		// Candidates are drawn from first to last, so lower NES OAM/root
-		// indexes sort later and remain visually on top.
-		if(a.Tile->RootSpriteIndex != b.Tile->RootSpriteIndex) {
-			return a.Tile->RootSpriteIndex > b.Tile->RootSpriteIndex;
-		}
-		if(a.Tile->SpritePriorityRank != b.Tile->SpritePriorityRank) {
-			return a.Tile->SpritePriorityRank > b.Tile->SpritePriorityRank;
-		}
-		// Synthetic pieces stay directly behind their native root tile.
-		if(a.Synthetic != b.Synthetic) {
-			return a.Synthetic && !b.Synthetic;
-		}
-		if(a.Tile->ProvenanceId != b.Tile->ProvenanceId) {
-			return a.Tile->ProvenanceId > b.Tile->ProvenanceId;
-		}
-
-		// These keys are rare tie-breakers. Computing them here avoids doing
-		// several hashes for every ordinary candidate.
-		uint32_t aNativeKey = a.Tile->GetHashCode();
-		uint32_t bNativeKey = b.Tile->GetHashCode();
-		if(aNativeKey != bNativeKey) {
-			return aNativeKey > bNativeKey;
-		}
-
-		uint32_t aTargetKey = buildTargetKey(a.HdTile);
-		uint32_t bTargetKey = buildTargetKey(b.HdTile);
-		if(aTargetKey != bTargetKey) {
-			return aTargetKey > bTargetKey;
-		}
-
-		uint32_t aStateKey = buildStateKey(a.Tile);
-		uint32_t bStateKey = buildStateKey(b.Tile);
-		if(aStateKey != bStateKey) {
-			return aStateKey > bStateKey;
-		}
-
-		// Final total-order key. If every visual identity key is equal, this
-		// preserves the legacy low-source-index-wins behavior.
-		return a.SourceOrder > b.SourceOrder;
-	};
-
-	auto sortCandidates = [&](LocalCandidate* bucket, int count) {
-		if(count < 2) {
-			return;
-		}
-
-		if(count <= InsertionSortCandidateLimit) {
-			for(int i = 1; i < count; i++) {
-				LocalCandidate candidate = bucket[i];
-				int position = i;
-				while(
-					position > 0
-					&& candidateLess(candidate, bucket[position - 1])
-				) {
-					bucket[position] = bucket[position - 1];
-					position--;
-				}
-				bucket[position] = candidate;
-			}
-			return;
-		}
-
-		std::sort(bucket, bucket + count, candidateLess);
-	};
-
-	selectCandidateOwner(bgSprites, bgCount);
 	sortCandidates(bgSprites, bgCount);
-	selectCandidateOwner(fgSprites, fgCount);
 	sortCandidates(fgSprites, fgCount);
 
 	auto drawCandidateList = [&](LocalCandidate* bucket, int count) {
@@ -1375,7 +1149,9 @@ void HdNesPack<scale>::Process(HdScreenInfo* hdScreenInfo, uint32_t* outputBuffe
 		uint32_t lineStartIndex = bufferIndex;
 
 		// HD GAMEPLAY BULK STRIP COMPOSITOR V111S4
-		// OnLineStart already selected bulk/fallback mode for this scanline.
+		// Precompose the full lowest-priority stack once, then GetPixels handles
+		// only background sprites, tiles, foreground sprites, and higher layers.
+		_bulkBehindBgSpritesReady = CanBulkRenderBehindBgSprites();
 		if(_bulkBehindBgSpritesReady) {
 			DrawBulkBehindBgSpritesLine(
 				i,

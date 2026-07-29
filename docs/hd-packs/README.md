@@ -1,76 +1,66 @@
-# HD-pack documentation
+# HD packs
 
 [Documentation index](../README.md)
 
-## Pack location
+## Location
 
-Enable HD packs in the core options and place each pack at:
-
-```text
-RetroArch\system\HdPacks\<ROM filename without extension>\hires.txt
-```
-
-HD packs and copyrighted game assets are not included in this repository.
-
-## Supported syntax
-
-Classic Mesen/MesenCE tags include:
+Place packs under:
 
 ```text
-<ver>, <scale>, <img>, <tile>, <condition>, <background>,
-<overscan>, <patch>, <options>, <bgm>, <sfx>, <addition>
+RetroArch\system\HdPacks\<content filename without extension>\
 ```
 
-Fork-only semantic tags include:
+The pack entry file is `hires.txt`.
 
-```text
-<page>, <watch>, <paletteSet>, <rect>, <context>,
-<contextTemplate>, <route>, <replace>
-```
+## Compatibility
 
-Semantic rules are lowered into classic renderer rules during pack load.
-Existing classic packs continue through the compatibility path.
+The fork supports classic Mesen/MesenCE HD-pack syntax. It also adds semantic
+authoring tags for large packs:
 
-## Background extensions
+- `<page>`
+- `<watch>`
+- `<paletteSet>`
+- `<rect>`
+- `<context>`
+- `<contextTemplate>`
+- `<route>`
+- `<replace>`
 
-Background syntax supports seamless wrapping:
+Semantic declarations are resolved during pack loading into the runtime
+condition/tile structures used by the renderer.
 
-```text
-None
-RepeatX
-RepeatY
-RepeatXY
-```
+## CHR identity
 
-It also supports two scroll modes:
+CHR-ROM content can be identified through mapped tile indexes. CHR-RAM content
+such as FDS games uses the complete 16-byte pattern data plus palette identity.
+This allows visually identical pattern layouts with different palettes to route
+to different replacement art.
 
-```text
-Scanline
-Gameplay
-```
+Rule candidates are evaluated in stored order; the first candidate whose
+conditions pass is selected.
 
-`Gameplay` follows accumulated game-world scrolling instead of a static
-HUD split. Version 1.4.0 retains fractional scroll through HD sampling
-and bulk-composites eligible lowest-priority repeating layers.
+## Additions
 
-Set the following environment variable before launching RetroArch to
-force the previous compatibility renderer for diagnostics:
+`<addition>` creates synthetic replacement pieces attached to a source tile.
+Synthetic pieces inherit the source logical object's root and lifetime priority.
+They are useful for artwork extending beyond native hardware layouts, though
+ordinary full-sprite authoring may eventually move to an explicit object layer.
 
-```text
-MESENCE_HD_BULK_PARALLAX=0
-```
+## Backgrounds and parallax
 
-## Authoring references
+Fork background extensions support:
 
-- [Full syntax reference](syntax-reference.md)
-- [Semantic smarter rules](semantic-rules.md)
-- [Smoke-test pack](examples/hires.native-smarter-smoke-test.txt)
+- `RepeatX`
+- `RepeatY`
+- `RepeatXY`
+- `Gameplay` scroll mode
 
-## Compatibility rules
+Gameplay scrolling samples the active playfield rather than a fixed HUD split
+and unwraps the NES horizontal scroll cycle into continuous movement. Eligible
+lowest-priority repeating layers use the bulk strip compositor; unsupported
+cases automatically use the compatibility path.
 
-- Keep classic `<tile>` fallbacks when adding semantic routes.
-- Avoid per-frame image loading.
-- Test level entry, death, restart, warp, and transitions.
-- Test normal speed and fast-forward.
-- Keep repeating artwork seamless at both horizontal edges.
-- Do not commit game ROMs, BIOS files, or copyrighted pack assets.
+Set `MESENCE_HD_BULK_PARALLAX=0` for diagnostic A/B testing.
+
+See the [syntax reference](syntax-reference.md) and
+[semantic rules guide](semantic-rules.md).

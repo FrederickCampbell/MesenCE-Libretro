@@ -1,122 +1,76 @@
-<h1 align="center">MesenCE Libretro</h1>
+# MesenCE Libretro
 
-<p align="center">
-  Experimental NES, Famicom, and Famicom Disk System Libretro core
-  based on MesenCE, with RetroAchievements and modern HD-pack support.
-</p>
+**Alpha NES/Famicom/FDS Libretro core based on MesenCE.**
 
-<p align="center">
-  <a href="https://github.com/FrederickCampbell/MesenCE-Libretro/releases/latest">
-    <img alt="Latest release" src="https://img.shields.io/github/v/release/FrederickCampbell/MesenCE-Libretro?display_name=tag&sort=semver">
-  </a>
-  <a href="LICENSE">
-    <img alt="GPL-3.0 license" src="https://img.shields.io/github/license/FrederickCampbell/MesenCE-Libretro">
-  </a>
-  <a href="docs/getting-started/build-windows.md">
-    <img alt="Windows x64" src="https://img.shields.io/badge/platform-Windows%20x64-0078D4">
-  </a>
-  <a href="https://github.com/FrederickCampbell/MesenCE-Libretro">
-    <img alt="NES and FDS" src="https://img.shields.io/badge/core-NES%20%7C%20Famicom%20%7C%20FDS-red">
-  </a>
-</p>
-
-<p align="center">
-  <a href="https://github.com/FrederickCampbell/MesenCE-Libretro/releases/latest"><strong>Download</strong></a>
-  ·
-  <a href="docs/README.md"><strong>Documentation</strong></a>
-  ·
-  <a href="docs/hd-packs/README.md"><strong>HD packs</strong></a>
-  ·
-  <a href=".github/CONTRIBUTING.md"><strong>Contributing</strong></a>
-</p>
+Current release line: **0.9.1 Alpha**
+Primary tested target: **Windows x64 + RetroArch**
+[GitHub Releases](https://github.com/FrederickCampbell/MesenCE-Libretro/releases)
 
 > [!IMPORTANT]
-> `v1.4.0` is the current tested Windows x64 release. This fork uses the
-> separate `mesen_ce_nes_libretro.dll` identity and does not overwrite
-> RetroArch's stock `mesen_libretro.dll`. Keep both cores installed while
-> the fork remains experimental.
+> This is an independent experimental fork. It uses the separate
+> `mesen_ce_nes_libretro.dll` identity and can remain installed beside
+> RetroArch's stock Mesen core.
 
-## Why this fork exists
+## What this fork adds
 
-MesenCE Libretro combines the MesenCE NES/FDS emulation core with a
-focused RetroArch frontend. It adds or repairs:
+- RetroAchievements-compatible NES/FDS memory exposure
+- RetroArch system-directory FDS firmware and HD-pack lookup
+- Full-resolution MesenCE HD-frame delivery
+- RetroArch-owned pacing, fast-forward, and duplicate-frame handling
+- Bounded Libretro audio short-write preservation
+- Classic Mesen/MesenCE HD-pack compatibility
+- Semantic HD-pack routing for maintainable large packs
+- Seamless gameplay-scrolled parallax backgrounds
+- Stable whole-object HD sprite priority across OAM rotation and overlap
 
-- RetroAchievements-compatible memory exposure
-- FDS firmware lookup through RetroArch's system directory
-- full-resolution HD-frame delivery
-- RetroArch-owned frame pacing and fast-forward behavior
-- current Mesen/MesenCE HD-pack compatibility
-- fork-only semantic HD-pack rules for large maintainable packs
-- seamless, gameplay-scrolled, smooth multi-layer parallax backgrounds
-- a separate core name, DLL, and RetroArch display identity
+The 0.9.1 alpha renderer recognizes common native 2x2 and 2x3 metasprites by
+geometry, tracks their identity across frames, and gives every native member and
+synthetic `<addition>` child one immutable lifetime priority. This fixes
+whole-object flashing and midpoint priority swaps without changing NES PPU
+timing, RAM, save states, or game logic.
 
-## Quick start
+## Install
 
-1. Download the DLL and `.info` file from the
-   [latest release](https://github.com/FrederickCampbell/MesenCE-Libretro/releases/latest).
-2. Copy the DLL to `RetroArch/cores/` and the `.info` file to
-   `RetroArch/info/`.
-3. For FDS games, provide your own valid `disksys.rom` under
-   `RetroArch/system/`.
+1. Download `mesen_ce_nes_libretro.dll` and `mesen_ce_nes_libretro.info` from the latest alpha release.
+2. Copy the DLL into `RetroArch\cores\`.
+3. Copy the `.info` file into `RetroArch\info\`.
+4. For FDS content, supply your own valid `disksys.rom` under `RetroArch\system\`.
+5. Put HD packs under `RetroArch\system\HdPacks\<ROM name>\`.
 
-The included installer can perform step 2:
+The included installer can copy and verify the core:
 
 ```powershell
-.\INSTALL_TO_RETROARCH.ps1 -RetroArchPath "C:\Path\To\RetroArch"
+.\INSTALL_TO_RETROARCH.ps1 -RetroArchPath 'C:\Path\To\RetroArch'
 ```
-
-See the [installation guide](docs/getting-started/install-retroarch.md)
-for verification and rollback instructions.
-
-## HD-pack extensions
-
-Classic Mesen/MesenCE HD-pack syntax remains supported. This fork also
-includes semantic routing tags such as:
-
-```text
-<page>, <watch>, <paletteSet>, <rect>, <context>,
-<contextTemplate>, <route>, <replace>
-```
-
-Background extensions include seamless `RepeatX`, `RepeatY`, and
-`RepeatXY` wrapping plus `Gameplay` scrolling. Eligible lowest-priority
-gameplay layers use the v1.4.0 bulk strip compositor for smooth
-HD-pixel parallax, with an automatic compatibility fallback.
-
-Read the [HD-pack guide](docs/hd-packs/README.md) or go directly to the
-[syntax reference](docs/hd-packs/syntax-reference.md).
 
 ## Documentation
 
-| Area | Guide |
+Start with the [documentation index](docs/README.md).
+
+| Topic | Document |
 | --- | --- |
-| Install the core | [RetroArch installation](docs/getting-started/install-retroarch.md) |
-| Build from source | [Windows x64 build](docs/getting-started/build-windows.md) |
-| Configure FDS | [FDS BIOS setup](docs/getting-started/fds-bios.md) |
-| Author HD packs | [HD-pack documentation](docs/hd-packs/README.md) |
-| Understand the port | [Architecture](docs/development/architecture.md) |
-| Test performance | [Performance guide](docs/development/performance.md) |
-| Publish a release | [Release process](docs/development/release-process.md) |
-| Browse every document | [Documentation index](docs/README.md) |
+| Architecture | [docs/development/architecture.md](docs/development/architecture.md) |
+| Design philosophy | [docs/DESIGN_PHILOSOPHY.md](docs/DESIGN_PHILOSOPHY.md) |
+| HD renderer | [docs/development/hd-renderer.md](docs/development/hd-renderer.md) |
+| Audio and video delivery | [docs/development/audio-video.md](docs/development/audio-video.md) |
+| HD packs | [docs/hd-packs/README.md](docs/hd-packs/README.md) |
+| Build and release | [docs/development/release-process.md](docs/development/release-process.md) |
+| Roadmap | [docs/ROADMAP.md](docs/ROADMAP.md) |
+| Changelog | [CHANGELOG.md](CHANGELOG.md) |
 
-## Compatibility and scope
+## Scope and compatibility
 
-- The public Libretro target currently focuses on NES/Famicom/FDS.
-- Windows x64 is the primary tested platform.
-- No formal minimum CPU is claimed. HD performance depends on scale,
-  image dimensions, alpha coverage, and active layer count.
-- Save-state compatibility is not promised across experimental releases.
-- Fork-only semantic tags require this fork.
-- ROMs, BIOS files, copyrighted HD packs, and game assets are not included.
+- Public work is focused on NES, Famicom, and FDS.
+- Windows x64 is the primary validated build.
+- Existing classic HD packs remain supported.
+- Fork-only semantic tags require this core.
+- Save-state compatibility is not guaranteed across alpha releases.
+- ROMs, BIOS files, copyrighted HD packs, and game assets are not distributed.
 
 ## Upstream and license
 
-This is an independent derivative project based on
-[MesenCE](https://github.com/nesdev-org/MesenCE) and the initial
-[hunterk/Mesen2](https://github.com/hunterk/Mesen2) Libretro prototype.
-Attribution and imported revisions are documented in
-[upstreams](docs/reference/upstreams.md).
+This project is derived from MesenCE and the earlier hunterk Mesen2 Libretro
+prototype. See [upstream attribution](docs/reference/upstreams.md).
 
-The repository is distributed under the terms in [LICENSE](LICENSE).
-It is not an official release of MesenCE, nesdev.org, Libretro,
-RetroArch, or RetroAchievements.
+Distributed under the terms in [LICENSE](LICENSE). This is not an official
+release of MesenCE, nesdev.org, Libretro, RetroArch, or RetroAchievements.

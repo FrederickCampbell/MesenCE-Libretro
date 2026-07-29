@@ -1,49 +1,47 @@
 # MesenCE Libretro documentation
 
-This directory is the authoritative documentation source for the
-project. It is versioned with the emulator source and can also be
-published through GitHub Pages.
+This directory is the authoritative documentation source for the fork.
+Behavior, syntax, architecture, and release changes should be documented in the
+same commit as the code that implements them.
 
-> [!NOTE]
-> The repository Wiki is not the source of truth. Update these files in
-> the same pull request as any behavior, syntax, or workflow change.
+## Start here
+
+| Document | Purpose |
+| --- | --- |
+| [Architecture](development/architecture.md) | Complete fork-specific system map |
+| [Design philosophy](DESIGN_PHILOSOPHY.md) | The boundaries and principles used for fork development |
+| [HD renderer](development/hd-renderer.md) | Tile capture, logical objects, additions, and priority |
+| [Audio and video](development/audio-video.md) | APU mixing, Libretro delivery, pacing, and hitch analysis |
+| [HD-pack overview](hd-packs/README.md) | Paths, compatibility, semantic syntax, and parallax |
+| [Release process](development/release-process.md) | Build, verify, version, tag, and publish |
+| [Roadmap](ROADMAP.md) | Work planned after the 0.9.1 alpha |
+| [Project history](history/project-history.md) | Consolidated development milestones |
+| [0.9.1 Alpha 1 notes](releases/v0.9.1-alpha.1.md) | Current alpha release |
 
 ## Getting started
 
 | Document | Purpose |
 | --- | --- |
 | [Install into RetroArch](getting-started/install-retroarch.md) | Install, verify, and roll back the custom core |
-| [Build on Windows](getting-started/build-windows.md) | Build the Windows x64 Libretro DLL |
-| [FDS BIOS setup](getting-started/fds-bios.md) | Configure legal user-supplied FDS firmware |
+| [Build on Windows](getting-started/build-windows.md) | Build the Windows x64 DLL |
+| [FDS BIOS setup](getting-started/fds-bios.md) | Configure user-supplied FDS firmware |
 
-## HD packs
+## HD-pack authoring
 
 | Document | Purpose |
 | --- | --- |
-| [HD-pack overview](hd-packs/README.md) | Paths, compatibility, and feature overview |
+| [HD-pack overview](hd-packs/README.md) | Feature overview and runtime model |
 | [Syntax reference](hd-packs/syntax-reference.md) | Classic and fork-only tags |
-| [Semantic rules](hd-packs/semantic-rules.md) | Native smarter-rule design and routing |
-| [Smoke-test pack](hd-packs/examples/hires.native-smarter-smoke-test.txt) | Minimal semantic syntax test input |
-
-## Development
-
-| Document | Purpose |
-| --- | --- |
-| [Architecture](development/architecture.md) | Libretro, frame pacing, memory, firmware, and HD rendering |
-| [Performance](development/performance.md) | Hot-path rules, test matrix, and parallax fallback |
-| [Release process](development/release-process.md) | Build, hash, tag, and GitHub release checklist |
+| [Semantic rules](hd-packs/semantic-rules.md) | Pages, watches, routes, contexts, and replacements |
+| [Examples](hd-packs/examples/) | Minimal test packs and syntax examples |
 
 ## Reference
 
 | Document | Purpose |
 | --- | --- |
-| [Repository layout](reference/repository-layout.md) | What belongs in the clone and what is generated |
-| [Upstream projects](reference/upstreams.md) | Source attribution and imported revisions |
-| [Changelog](../CHANGELOG.md) | Version-by-version project changes |
-| [Release notes](releases/README.md) | Detailed notes for published milestones |
+| [Repository layout](reference/repository-layout.md) | Source versus generated/local material |
+| [Upstream projects](reference/upstreams.md) | Attribution and imported revisions |
+| [Changelog](../CHANGELOG.md) | Public version history |
+| [Preserved upstream documentation](upstream/README.md) | Standalone MesenCE material that may not apply directly |
 
-## Preserved upstream documentation
-
-The original imported MesenCE documents are kept under
-[upstream/](upstream/README.md). They describe the standalone upstream
-emulator and may not apply directly to this focused Libretro fork.
+The GitHub Wiki is not the source of truth.

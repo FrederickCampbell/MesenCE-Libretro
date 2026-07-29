@@ -2,51 +2,75 @@
 
 [Documentation index](../README.md)
 
+## Versioning
+
+The alpha line follows semantic prerelease identifiers:
+
+- `0.9.1-alpha.1`
+- `0.9.1-alpha.2`
+- `0.9.2-alpha.1`
+
+The Git tag adds a leading `v`.
+
+Keep these synchronized:
+
+- root `VERSION`
+- `retro_get_system_info()` library version
+- `CHANGELOG.md`
+- `docs/releases/<tag without v>.md`
+
 ## Preflight
 
 ```powershell
 git status --short
 git fetch origin --tags --prune
 git diff --check
+gh auth status
 ```
 
-Require a clean working tree and reconcile remote changes before
-building.
+Require a clean tree before applying source work. Do not publish from a
+disposable renderer test worktree.
 
 ## Build
 
 ```powershell
-.\BUILD_WINDOWS_X64.ps1 -Clean
+.\BUILD_WINDOWS_X64.ps1 `
+  -Clean `
+  -MsysRoot 'C:\_Hub\_Dev\Tools\MSYS2' `
+  -SkipPrerequisiteInstall
 ```
 
-The supported Windows x64 build uses `LTO=false`.
-
-Expected public artifacts:
+Expected artifacts:
 
 ```text
 dist\mesen_ce_nes_libretro.dll
 dist\mesen_ce_nes_libretro.info
-dist\mesen_ce_nes_libretro.sha256.txt
+dist\SHA256SUMS.txt
+dist\DLL_IMPORTS.txt
 ```
 
 ## Verify
 
-- Confirm mandatory Libretro exports.
-- Confirm the DLL has no unexpected runtime dependency.
-- Hash the DLL.
-- Install only after closing RetroArch.
-- Verify the installed DLL hash matches the release DLL.
-- Test non-HD, FDS, classic-HD, and semantic-HD content.
+- mandatory Libretro exports are present
+- forbidden MinGW runtime dependencies are absent
+- DLL checksum is generated
+- non-HD NES works
+- FDS firmware/content works
+- classic HD packs work
+- semantic HD packs work
+- pause, fast-forward, rewind, and state load are tested
+- renderer overlap matrix passes
+- published checksum matches the local DLL
 
 ## Publish
 
-1. Update `CHANGELOG.md`.
-2. Add detailed notes under `docs/releases/`.
-3. Commit the exact source used for the build.
-4. Create an annotated version tag.
-5. Push the branch and tag without rewriting history.
-6. Create the GitHub release and attach the DLL, `.info`, and checksum.
-7. Verify the published asset hash.
+1. Commit the exact source and documentation used for the build.
+2. Fast-forward the public `main` branch without rewriting history.
+3. Create and push an annotated tag.
+4. Create a GitHub prerelease with `--verify-tag`.
+5. Upload DLL, `.info`, checksum, and import audit.
+6. Verify the release assets and checksum.
 
-Documentation-only repository cleanup does not require a new binary
-release.
+The one-time 0.9.1 reset also archives old release metadata/assets and removes
+the previous experimental releases/tags after the new alpha release exists.
+Future releases must not routinely delete history.

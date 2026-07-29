@@ -62,7 +62,7 @@ protected:
 	void TriggerNmi();
 
 	__forceinline void LoadTileInfo();
-	void LoadSprite(uint8_t spriteY, uint8_t tileIndex, uint8_t attributes, uint8_t spriteX, bool extraSprite);
+	void LoadSprite(uint8_t spriteY, uint8_t tileIndex, uint8_t attributes, uint8_t spriteX, bool extraSprite, uint8_t sourceOamIndex);
 	void LoadSpriteTileInfo();
 	void LoadExtraSprites();
 	__forceinline void ShiftTileRegisters();

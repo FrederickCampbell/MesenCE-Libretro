@@ -36,6 +36,29 @@ class HdNesPpu final : public NesPpu<HdNesPpu>
 	NesTileInfoEx _currentTileEx = {};
 	NesTileInfoEx _nextTileEx = {};
 
+	struct StableObjectTrack {
+		bool Active = false;
+		uint32_t Id = 0;
+		uint64_t PriorityKey = 0xFFFFFFFFFFFFFFFFull;
+		uint64_t CoarseSignature = 0;
+		uint32_t DetailSignature = 0;
+		int16_t X = 0;
+		int16_t Y = 0;
+		int8_t VelocityX = 0;
+		int8_t VelocityY = 0;
+		uint8_t GroupSize = 0;
+		uint8_t MemberCount = 0;
+		uint32_t LastFrame = 0;
+	};
+
+	StableObjectTrack _stableObjectTracks[64] = {};
+	uint32_t _nextStableObjectTrackId = 1;
+	uint32_t _stableObjectLastFrame = 0;
+	bool _stableObjectTrackerInitialized = false;
+
+	void ResetStableObjectTracker();
+	void FinalizeStableObjectPriorities(HdScreenInfo* info);
+
 public:
 	HdNesPpu(NesConsole* console, HdPackData* hdData);
 	virtual ~HdNesPpu();
@@ -135,15 +158,16 @@ public:
 						tileInfo.Sprite[j].VerticalMirroring = spriteEx.VerticalMirror;
 						tileInfo.Sprite[j].BackgroundPriority = sprite.BackgroundPriority;
 				tileInfo.Sprite[j].IsSyntheticAddition = false;
-				tileInfo.Sprite[j].SourceSpriteIndex = i;
-				tileInfo.Sprite[j].SpriteXPosition = sprite.SpriteX;
-				tileInfo.Sprite[j].RootSpriteIndex = i;
-				tileInfo.Sprite[j].SpritePriorityRank = i;
-				tileInfo.Sprite[j].ProvenanceId = ((uint32_t)i << 24) ^ tileInfo.Sprite[j].GetHashCode();
+						uint8_t stableOamIndex = _spriteOamIndex[i];
+						if(stableOamIndex >= 64) {
+							stableOamIndex = i;
+						}
+						tileInfo.Sprite[j].RootSpriteIndex = stableOamIndex;
+						tileInfo.Sprite[j].SpritePriorityRank = stableOamIndex;
+						tileInfo.Sprite[j].ProvenanceId = ((uint32_t)stableOamIndex << 24) ^ tileInfo.Sprite[j].GetHashCode();
 						tileInfo.Sprite[j].PaletteOffset = sprite.PaletteOffset;
 
 						tileInfo.Sprite[j].SpriteColorIndex = ((spriteEx.LowByte << shift) & 0x80) >> 7 | ((spriteEx.HighByte << shift) & 0x80) >> 6;
-						tileInfo.Sprite[j].IsNativeOwner = (&sprite == _lastSprite);
 
 						if(tileInfo.Sprite[j].SpriteColorIndex == 0) {
 							tileInfo.Sprite[j].SpriteColor = ReadPaletteRam(0);

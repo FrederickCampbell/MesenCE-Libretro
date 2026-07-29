@@ -1,25 +1,17 @@
-# Build output
+# ---------------------------------------------------------------------------
+# Build output and release staging
+# ---------------------------------------------------------------------------
 /dist/
 /build/
 /out/
 /artifacts/
-/release-stage/
+/release-staging/
 build-transcript.txt
-
-# Libretro build products
-/Libretro/mesen_ce_nes_libretro.dll
-Libretro/*.map
-Libretro/*.o
-Libretro/**/*.o
-Libretro/*.d
-Libretro/**/*.d
-
-# Native compiler and linker output
-*.o
-*.d
-*.dep
-*.obj
+*.dll
 *.map
+*.o
+*.obj
+*.d
 *.pdb
 *.ilk
 *.exp
@@ -27,58 +19,70 @@ Libretro/**/*.d
 *.a
 *.gcda
 *.gcno
-DLL_IMPORTS.txt
-SHA256SUMS.txt
+*.profraw
+*.profdata
 
-# Visual Studio, MSBuild, .NET, and CMake
-.vs/
-**/.vs/
-**/bin/
-**/obj/
-**/Debug/
-**/Release/
-**/x64/
-**/x86/
-**/publish/
-*.suo
-*.user
-*.userosscache
-*.sln.docstates
-*.VC.db
-*.VC.opendb
-TestResults/
-*.coverage
-*.coveragexml
-packages/
-*.nupkg
+# CMake / generated compilation databases
 CMakeFiles/
 CMakeCache.txt
 cmake_install.cmake
 cmake-build-*/
+compile_commands.json
 
-# Editor and Python state
+# ---------------------------------------------------------------------------
+# IDE, editor, and operating-system state
+# ---------------------------------------------------------------------------
+.vs/
 .vscode/
 .idea/
-__pycache__/
-*.py[cod]
-.pytest_cache/
-.cache/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.code-workspace
+*.swp
+*.swo
+*~
+Thumbs.db
+Desktop.ini
+.DS_Store
 
-# Logs, crash captures, and temporary files
+# ---------------------------------------------------------------------------
+# Logs, diagnostics, crash captures, and temporary patches
+# ---------------------------------------------------------------------------
 *.log
+*.dmp
+*.stackdump
 mesen-ce-gdb-*.txt
 mesen-ce-gdb-*.log
+*.patch
+*.diff
+*.orig
+*.rej
 *.tmp
 *.temp
 *.bak
-*.bak_*
-*.orig
-*.rej
-*~
-*.patch.tmp
-cleanup_manifest_*.txt
+*.old
+*.backup-*
+*.autosave
+test-results/
+diagnostics/
 
-# Local test content, firmware, and HD packs
+# ---------------------------------------------------------------------------
+# Language/tool caches
+# ---------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+node_modules/
+.nuget/
+packages/
+
+# ---------------------------------------------------------------------------
+# Local ROMs, firmware, copyrighted packs, and generated HD data
+# ---------------------------------------------------------------------------
 *.nes
 *.fds
 *.unf
@@ -90,29 +94,25 @@ cleanup_manifest_*.txt
 *.gba
 disksys.rom
 FdsBios.bin
-/HdPacks/
+HdPacks/
+HdPackDumps/
+ObjectDumps/
+*.hdcache
+hires.cache
 
-# Local SMB2J research cache
-/_smb2j_disasm_cache/
-
-# Local release helpers and staging
-/BUILD_AND_RUN_MESENCE_TEST*.ps1
-/LAUNCH_MESENCE_TEST.ps1
-/CREATE_PRIVACY_SAFE_MESENCE_REPO*.ps1
-/MesenCE-Libretro-v*-Windows-x64.zip
-/PUBLICATION_SUMMARY.txt
-
-# Superseded generated intermediate notes
-/RELEASE_NOTES_HD_BACKGROUND_WRAP_V110.md
-/RELEASE_NOTES_HD_GAMEPLAY_SCROLL_V111.md
-
-# Archives and local backups
-/_Backups/
+# ---------------------------------------------------------------------------
+# Local worktrees, recovery material, and archives
+# ---------------------------------------------------------------------------
+_MesenCE-TestWorktrees/
+_Backups/
+*.zip
 *.7z
 *.rar
-*.backup-*
+*.tar
+*.tar.gz
+*.bundle
 
-# Operating-system metadata
-Thumbs.db
-Desktop.ini
-.DS_Store
+# Local environment files
+.env
+.env.*
+!.env.example

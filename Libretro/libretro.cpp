@@ -2132,8 +2132,8 @@ void libretro_probe_inputs(const char* tag)
 
 	RETRO_API void retro_get_system_info(struct retro_system_info *info)
 	{
-		// TODO: Replace with real version string when available
-		static std::string version = "1.0.26";
+		// Fork release identity; keep synchronized with the root VERSION file
+		static std::string version = "0.9.1-alpha.1";
 		_mesenVersion = version;
 		//_mesenVersion = EmulationSettings::GetMesenVersionString();
 

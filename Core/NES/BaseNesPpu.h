@@ -86,7 +86,8 @@ protected:
 	//448 : end of cache line
 	////////////////////////
 	NesSpriteInfo _spriteTiles[64] = {};
-
+	uint8_t _secondarySpriteOamIndex[8] = {};
+	uint8_t _spriteOamIndex[64] = {};
 	static constexpr int SpriteShifterDone = 0x8000;
 	uint16_t _spriteShifterList[9] = { SpriteShifterDone, SpriteShifterDone, SpriteShifterDone, SpriteShifterDone, SpriteShifterDone, SpriteShifterDone, SpriteShifterDone, SpriteShifterDone, SpriteShifterDone }; //Ordered by X coordinate.
 	uint8_t _nextSpriteShifter = 0;

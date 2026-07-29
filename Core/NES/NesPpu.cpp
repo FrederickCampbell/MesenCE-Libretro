@@ -126,7 +126,8 @@ template<class T> void NesPpu<T>::Reset(bool softReset)
 	_oamCopyDone = false;
 
 	memset(_spriteTiles, 0, sizeof(_spriteTiles));
-	_spriteCount = 0;
+	memset(_secondarySpriteOamIndex, 0xFF, sizeof(_secondarySpriteOamIndex));
+	memset(_spriteOamIndex, 0xFF, sizeof(_spriteOamIndex));	_spriteCount = 0;
 	_secondaryOamAddr = 0;
 	_sprite0Visible = false;
 	_spriteIndex = 0;
@@ -718,7 +719,7 @@ template<class T> void NesPpu<T>::LoadTileInfo()
 	}
 }
 
-template<class T> void NesPpu<T>::LoadSprite(uint8_t spriteY, uint8_t tileIndex, uint8_t attributes, uint8_t spriteX, bool extraSprite)
+template<class T> void NesPpu<T>::LoadSprite(uint8_t spriteY, uint8_t tileIndex, uint8_t attributes, uint8_t spriteX, bool extraSprite, uint8_t sourceOamIndex)
 {
 	bool backgroundPriority = (attributes & 0x20) == 0x20;
 	bool horizontalMirror = (attributes & 0x40) == 0x40;
@@ -742,7 +743,7 @@ template<class T> void NesPpu<T>::LoadSprite(uint8_t spriteY, uint8_t tileIndex,
 	}
 
 	NesSpriteInfo& info = _spriteTiles[_spriteIndex];
-	info.BackgroundPriority = backgroundPriority;
+	_spriteOamIndex[_spriteIndex] = sourceOamIndex;	info.BackgroundPriority = backgroundPriority;
 	info.PaletteOffset = ((attributes & 0x03) << 2) | 0x10;
 	if(extraSprite) {
 		//Use DebugReadVram for extra sprites to prevent side-effects.
@@ -811,7 +812,7 @@ template<class T> void NesPpu<T>::LoadExtraSprites()
 			for(uint32_t i = (_lastVisibleSpriteAddr + 4) & 0xFC; i != (uint32_t)(_firstVisibleSpriteAddr & 0xFC); i = (i + 4) & 0xFC) {
 				uint8_t spriteY = _spriteRam[i];
 				if(_scanline >= spriteY && _scanline < spriteY + (_control.LargeSprites ? 16 : 8)) {
-					LoadSprite(spriteY, _spriteRam[i + 1], _spriteRam[i + 2], _spriteRam[i + 3], true);
+					LoadSprite(spriteY, _spriteRam[i + 1], _spriteRam[i + 2], _spriteRam[i + 3], true, (uint8_t)(i >> 2));
 				}
 			}
 		}
@@ -823,7 +824,7 @@ template<class T> void NesPpu<T>::LoadSpriteTileInfo()
 	//Set it to whatever shifter we're filling.
 	_spriteIndex = (_cycle - 257) >> 3;
 	uint8_t* spriteAddr = _secondarySpriteRam + _spriteIndex * 4;
-	LoadSprite(*spriteAddr, *(spriteAddr + 1), *(spriteAddr + 2), *(spriteAddr + 3), false);
+	LoadSprite(*spriteAddr, *(spriteAddr + 1), *(spriteAddr + 2), *(spriteAddr + 3), false, _secondarySpriteOamIndex[_spriteIndex]);
 }
 
 template<class T> void NesPpu<T>::ShiftTileRegisters()
@@ -1041,6 +1042,7 @@ template<class T> void NesPpu<T>::ProcessSpriteEvaluationStart()
 	_sprite0Added = false;
 	_spriteInRange = false;
 	_secondaryOamAddr = 0;
+	memset(_secondarySpriteOamIndex, 0xFF, sizeof(_secondarySpriteOamIndex));
 
 	_overflowBugCounter = 0;
 
@@ -1106,6 +1108,9 @@ template<class T> void NesPpu<T>::ProcessSpriteEvaluation()
 						_secondarySpriteRam[_secondaryOamAddr] = _oamCopybuffer;
 
 						if(_spriteInRange) {
+							if(spriteAddrL == 0 && _secondaryOamAddr < 0x20) {
+								_secondarySpriteOamIndex[_secondaryOamAddr >> 2] = spriteAddrH;
+							}
 							if(_cycle == 66) {
 								//If the first Y coordinate we load is in range, set the sprite 0 flag
 								//This happens even if this isn't actually the first sprite in OAM
