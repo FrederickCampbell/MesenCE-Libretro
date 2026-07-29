@@ -184,16 +184,15 @@ static NesConfig _lastNesConfig = {};
 static uint32_t _lastReportedWidth = 256;
 static uint32_t _lastReportedHeight = 240;
 
-// MESENCE_PERF_V1_0_25
-// Libretro audio adapter with bounded short-write preservation.
+// MESENCE_AUDIO_TRANSPORT_V1
+// Fixed-capacity libretro audio transport.
+//
+// This changes only host delivery of already-generated samples. The emulated
+// NES/FDS APU, DMC timing, expansion audio, sample generation, and save-state
+// state remain untouched.
 class LibretroAudioDevice : public IAudioDevice {
 public:
-	LibretroAudioDevice()
-	{
-		_monoBuffer.reserve(4096);
-		_pendingAudio.reserve(MaxPendingFrames * 2);
-	}
-
+	LibretroAudioDevice() = default;
 	~LibretroAudioDevice() override = default;
 
 	void PlayBuffer(int16_t* soundBuffer, uint32_t bufferSize, uint32_t sampleRate, bool isStereo) override
@@ -203,25 +202,20 @@ public:
 			return;
 		}
 
-		const int16_t* interleaved = soundBuffer;
-		if(!isStereo) {
-			_monoBuffer.resize((size_t)bufferSize * 2);
-			for(uint32_t i = 0; i < bufferSize; i++) {
-				int16_t sample = soundBuffer[i];
-				_monoBuffer[(size_t)i * 2] = sample;
-				_monoBuffer[(size_t)i * 2 + 1] = sample;
+		for(uint32_t i = 0; i < bufferSize; i++) {
+			int16_t left;
+			int16_t right;
+			if(isStereo) {
+				left = soundBuffer[(size_t)i * 2];
+				right = soundBuffer[(size_t)i * 2 + 1];
+			} else {
+				left = soundBuffer[i];
+				right = soundBuffer[i];
 			}
-			interleaved = _monoBuffer.data();
+			PushFrame(left, right);
 		}
 
-		CompactPending(false);
-		_pendingAudio.insert(
-			_pendingAudio.end(),
-			interleaved,
-			interleaved + ((size_t)bufferSize * 2)
-		);
-
-		TrimOverflow(MaxPendingFrames);
+		// Preserve the current callback cadence in this first increment.
 		SubmitPending();
 	}
 
@@ -235,8 +229,9 @@ public:
 
 	void ClearPending()
 	{
-		_pendingAudio.clear();
-		_pendingOffsetSamples = 0;
+		_readFrame = 0;
+		_writeFrame = 0;
+		_pendingFrames = 0;
 	}
 
 	void OnFastForwardEnded()
@@ -245,14 +240,7 @@ public:
 		ApplyResumeRamp();
 	}
 
-	size_t GetPendingFrames() const
-	{
-		if(_pendingAudio.size() <= _pendingOffsetSamples) {
-			return 0;
-		}
-		return (_pendingAudio.size() - _pendingOffsetSamples) / 2;
-	}
-
+	size_t GetPendingFrames() const { return _pendingFrames; }
 	uint64_t GetShortWriteCount() const { return _shortWriteCount; }
 	uint64_t GetZeroWriteCount() const { return _zeroWriteCount; }
 	uint64_t GetDroppedFrameCount() const { return _droppedFrames; }
@@ -262,83 +250,96 @@ private:
 	static constexpr size_t ResumePendingFrames = 1024;
 	static constexpr size_t ResumeRampFrames = 64;
 
-	std::vector<int16_t> _monoBuffer;
-	std::vector<int16_t> _pendingAudio;
-	size_t _pendingOffsetSamples = 0;
+	std::array<int16_t, MaxPendingFrames * 2> _pendingAudio = {};
+	size_t _readFrame = 0;
+	size_t _writeFrame = 0;
+	size_t _pendingFrames = 0;
 	uint64_t _shortWriteCount = 0;
 	uint64_t _zeroWriteCount = 0;
 	uint64_t _droppedFrames = 0;
 
+	void PushFrame(int16_t left, int16_t right)
+	{
+		if(_pendingFrames == MaxPendingFrames) {
+			// Keep the newest audio when the frontend falls too far behind.
+			AdvanceRead(1);
+			_droppedFrames++;
+		}
+
+		size_t sampleIndex = _writeFrame * 2;
+		_pendingAudio[sampleIndex] = left;
+		_pendingAudio[sampleIndex + 1] = right;
+		_writeFrame = (_writeFrame + 1) % MaxPendingFrames;
+		_pendingFrames++;
+	}
+
+	void AdvanceRead(size_t frames)
+	{
+		frames = std::min(frames, _pendingFrames);
+		_readFrame = (_readFrame + frames) % MaxPendingFrames;
+		_pendingFrames -= frames;
+		if(_pendingFrames == 0) {
+			_readFrame = _writeFrame;
+		}
+	}
+
 	void SubmitPending()
 	{
-		size_t framesAvailable = GetPendingFrames();
-		if(!_audioSampleBatch || framesAvailable == 0) {
+		if(!_audioSampleBatch || _pendingFrames == 0) {
 			return;
 		}
 
-		const int16_t* data = _pendingAudio.data() + _pendingOffsetSamples;
-		size_t accepted = _audioSampleBatch(data, framesAvailable);
-		if(accepted > framesAvailable) {
-			accepted = framesAvailable;
-		}
+		// A wrapped ring needs at most two frontend calls. Stop on a short write
+		// so every unaccepted sample remains queued in exact order.
+		for(int span = 0; span < 2 && _pendingFrames > 0; span++) {
+			size_t contiguousFrames = std::min(
+				_pendingFrames,
+				MaxPendingFrames - _readFrame
+			);
+			const int16_t* data = _pendingAudio.data() + (_readFrame * 2);
+			size_t accepted = _audioSampleBatch(data, contiguousFrames);
+			if(accepted > contiguousFrames) {
+				accepted = contiguousFrames;
+			}
 
-		if(accepted == 0) {
-			_zeroWriteCount++;
-			return;
-		}
+			if(accepted == 0) {
+				_zeroWriteCount++;
+				return;
+			}
+			if(accepted < contiguousFrames) {
+				_shortWriteCount++;
+			}
 
-		if(accepted < framesAvailable) {
-			_shortWriteCount++;
+			AdvanceRead(accepted);
+			if(accepted < contiguousFrames) {
+				return;
+			}
 		}
-
-		_pendingOffsetSamples += accepted * 2;
-		CompactPending(false);
 	}
 
 	void TrimOverflow(size_t maximumFrames)
 	{
-		size_t pendingFrames = GetPendingFrames();
-		if(pendingFrames <= maximumFrames) {
+		if(_pendingFrames <= maximumFrames) {
 			return;
 		}
 
-		size_t framesToDrop = pendingFrames - maximumFrames;
-		_pendingOffsetSamples += framesToDrop * 2;
+		size_t framesToDrop = _pendingFrames - maximumFrames;
+		AdvanceRead(framesToDrop);
 		_droppedFrames += framesToDrop;
-		CompactPending(true);
-	}
-
-	void CompactPending(bool force)
-	{
-		if(_pendingOffsetSamples == 0) {
-			return;
-		}
-
-		if(_pendingOffsetSamples >= _pendingAudio.size()) {
-			ClearPending();
-			return;
-		}
-
-		if(force || _pendingOffsetSamples >= 4096) {
-			size_t remainingSamples = _pendingAudio.size() - _pendingOffsetSamples;
-			std::move(
-				_pendingAudio.begin() + (std::vector<int16_t>::difference_type)_pendingOffsetSamples,
-				_pendingAudio.end(),
-				_pendingAudio.begin()
-			);
-			_pendingAudio.resize(remainingSamples);
-			_pendingOffsetSamples = 0;
-		}
 	}
 
 	void ApplyResumeRamp()
 	{
-		size_t pendingFrames = GetPendingFrames();
-		size_t rampFrames = std::min(pendingFrames, ResumeRampFrames);
+		size_t rampFrames = std::min(_pendingFrames, ResumeRampFrames);
+		if(rampFrames == 0) {
+			return;
+		}
+
 		for(size_t i = 0; i < rampFrames; i++) {
 			int32_t numerator = (int32_t)(i + 1);
 			int32_t denominator = (int32_t)rampFrames;
-			size_t sampleIndex = _pendingOffsetSamples + (i * 2);
+			size_t frameIndex = (_readFrame + i) % MaxPendingFrames;
+			size_t sampleIndex = frameIndex * 2;
 			_pendingAudio[sampleIndex] =
 				(int16_t)(((int32_t)_pendingAudio[sampleIndex] * numerator) / denominator);
 			_pendingAudio[sampleIndex + 1] =
@@ -1966,10 +1967,7 @@ void libretro_probe_inputs(const char* tag)
 					if(nesCfg.ChannelVolumes[i] == 0) {
 						nesCfg.ChannelVolumes[i] = 100;
 					}
-					// Initialize panning to center (50) if zero
-					if(nesCfg.ChannelPanning[i] == 0) {
-						nesCfg.ChannelPanning[i] = 50;
-					}
+					// Panning value 0 is the true center. Do not rewrite it.
 				}
 				_emu->GetSettings()->SetNesConfig(nesCfg);
 			}
