@@ -1108,6 +1108,92 @@ void HdNesPack<scale>::GetPixels(uint32_t x, uint32_t y, HdPpuPixelInfo& pixelIn
 		}
 	}
 
+
+	// MESENCE_HD_NATIVE_OWNERSHIP_V1
+	// Composite one native source group at an overlap pixel. Synthetic
+	// additions inherit SourceSpriteIndex and RootSpriteIndex via memcpy.
+	auto isBetterStableOwner = [](const LocalCandidate& candidate, const LocalCandidate& current) {
+		if(candidate.Synthetic != current.Synthetic) {
+			return !candidate.Synthetic;
+		}
+		if(candidate.Tile->RootSpriteIndex != current.Tile->RootSpriteIndex) {
+			return candidate.Tile->RootSpriteIndex < current.Tile->RootSpriteIndex;
+		}
+		if(candidate.Tile->SpritePriorityRank != current.Tile->SpritePriorityRank) {
+			return candidate.Tile->SpritePriorityRank < current.Tile->SpritePriorityRank;
+		}
+		if(candidate.Tile->SpriteXPosition != current.Tile->SpriteXPosition) {
+			return candidate.Tile->SpriteXPosition < current.Tile->SpriteXPosition;
+		}
+		if(candidate.Tile->TileIndex != current.Tile->TileIndex) {
+			return candidate.Tile->TileIndex < current.Tile->TileIndex;
+		}
+		if(candidate.Tile->PaletteColors != current.Tile->PaletteColors) {
+			return candidate.Tile->PaletteColors < current.Tile->PaletteColors;
+		}
+		if(candidate.Tile->SourceSpriteIndex != current.Tile->SourceSpriteIndex) {
+			return candidate.Tile->SourceSpriteIndex < current.Tile->SourceSpriteIndex;
+		}
+		return candidate.SourceOrder < current.SourceOrder;
+	};
+
+	auto selectCandidateOwner = [&](LocalCandidate* bucket, int& count) {
+		if(count < 2) {
+			return;
+		}
+
+		int selected = -1;
+
+		// The exact native PPU winner is authoritative when available.
+		for(int i = 0; i < count; i++) {
+			if(!bucket[i].Synthetic
+				&& bucket[i].Tile->IsNativeOwner
+				&& bucket[i].Tile->SpriteColorIndex != 0
+				&& (selected < 0 || isBetterStableOwner(bucket[i], bucket[selected]))) {
+				selected = i;
+			}
+		}
+
+		// Oversized HD-only pixels have no native winner. Prefer a genuine
+		// source and choose it by stable sprite-evaluation identity.
+		if(selected < 0) {
+			for(int i = 0; i < count; i++) {
+				if(!bucket[i].Synthetic
+					&& (selected < 0 || isBetterStableOwner(bucket[i], bucket[selected]))) {
+					selected = i;
+				}
+			}
+		}
+		if(selected < 0) {
+			for(int i = 0; i < count; i++) {
+				if(selected < 0 || isBetterStableOwner(bucket[i], bucket[selected])) {
+					selected = i;
+				}
+			}
+		}
+		if(selected < 0) {
+			count = 0;
+			return;
+		}
+
+		uint8_t selectedSource = bucket[selected].Tile->SourceSpriteIndex;
+		uint8_t selectedRoot = bucket[selected].Tile->RootSpriteIndex;
+		int writeIndex = 0;
+
+		for(int i = 0; i < count; i++) {
+			bool sameOwner = selectedSource != 0xFF
+				? bucket[i].Tile->SourceSpriteIndex == selectedSource
+				: bucket[i].Tile->RootSpriteIndex == selectedRoot;
+			if(sameOwner) {
+				if(writeIndex != i) {
+					bucket[writeIndex] = bucket[i];
+				}
+				writeIndex++;
+			}
+		}
+		count = writeIndex;
+	};
+
 	auto candidateLess = [&](const LocalCandidate& a, const LocalCandidate& b) {
 		// Candidates are drawn from first to last, so lower NES OAM/root
 		// indexes sort later and remain visually on top.
@@ -1174,7 +1260,9 @@ void HdNesPack<scale>::GetPixels(uint32_t x, uint32_t y, HdPpuPixelInfo& pixelIn
 		std::sort(bucket, bucket + count, candidateLess);
 	};
 
+	selectCandidateOwner(bgSprites, bgCount);
 	sortCandidates(bgSprites, bgCount);
+	selectCandidateOwner(fgSprites, fgCount);
 	sortCandidates(fgSprites, fgCount);
 
 	auto drawCandidateList = [&](LocalCandidate* bucket, int count) {

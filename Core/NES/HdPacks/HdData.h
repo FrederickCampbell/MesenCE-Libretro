@@ -94,6 +94,11 @@ struct HdPpuTileInfo : public HdTileKey
 	bool VerticalMirroring = false;
 	bool BackgroundPriority = false;
 	bool IsSyntheticAddition = false;
+	// MESENCE_HD_NATIVE_OWNERSHIP_V1
+	// Runtime compositor metadata; excluded from tile matching.
+	bool IsNativeOwner = false;
+	uint8_t SourceSpriteIndex = 0xFF;
+	uint8_t SpriteXPosition = 0;
 	uint8_t RootSpriteIndex = 0xFF;
 	uint8_t SpritePriorityRank = 0xFF;
 	uint32_t ProvenanceId = 0;

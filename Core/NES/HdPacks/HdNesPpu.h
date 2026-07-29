@@ -135,12 +135,15 @@ public:
 						tileInfo.Sprite[j].VerticalMirroring = spriteEx.VerticalMirror;
 						tileInfo.Sprite[j].BackgroundPriority = sprite.BackgroundPriority;
 				tileInfo.Sprite[j].IsSyntheticAddition = false;
+				tileInfo.Sprite[j].SourceSpriteIndex = i;
+				tileInfo.Sprite[j].SpriteXPosition = sprite.SpriteX;
 				tileInfo.Sprite[j].RootSpriteIndex = i;
 				tileInfo.Sprite[j].SpritePriorityRank = i;
 				tileInfo.Sprite[j].ProvenanceId = ((uint32_t)i << 24) ^ tileInfo.Sprite[j].GetHashCode();
 						tileInfo.Sprite[j].PaletteOffset = sprite.PaletteOffset;
 
 						tileInfo.Sprite[j].SpriteColorIndex = ((spriteEx.LowByte << shift) & 0x80) >> 7 | ((spriteEx.HighByte << shift) & 0x80) >> 6;
+						tileInfo.Sprite[j].IsNativeOwner = (&sprite == _lastSprite);
 
 						if(tileInfo.Sprite[j].SpriteColorIndex == 0) {
 							tileInfo.Sprite[j].SpriteColor = ReadPaletteRam(0);
