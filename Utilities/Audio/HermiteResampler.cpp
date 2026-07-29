@@ -36,6 +36,9 @@ void HermiteResampler::Reset()
 		_prevRight[i] = 0.0;
 	}
 	_fraction = 0.0;
+	_left = 0;
+	_right = 0;
+	_pendingSamples.clear();
 }
 
 void HermiteResampler::SetVolume(double volume)
