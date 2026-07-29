@@ -84,6 +84,9 @@ static unsigned _libretroLastThrottleMode = RETRO_THROTTLE_NONE;
 static bool _libretroWasFastForwarding = false;
 static bool _libretroCanDupe = false;
 static uint64_t _libretroFastForwardExitFences = 0;
+// MESENCE_LIBRETRO_FRAME_PACING_V1
+static bool _libretroFrameDiagnosticsEnabled = false;
+static uint64_t _libretroFramePublicationMismatches = 0;
 
 // MESENCE_CHEATS_OPTIONS_V1_0_26
 struct LibretroCheatSlot {
@@ -483,6 +486,13 @@ extern "C" {
 			logCallback = log.log;
 		else
 			logCallback = nullptr;
+
+		// Read process diagnostics configuration once, outside retro_run().
+		const char* diagnostics = getenv("MESENCE_FRAME_DIAGNOSTICS");
+		_libretroFrameDiagnosticsEnabled = diagnostics
+			&& diagnostics[0] != '\0'
+			&& strcmp(diagnostics, "0") != 0;
+		_libretroFramePublicationMismatches = 0;
 
 		bool canDupe = false;
 		_libretroCanDupe = env_cb
@@ -1256,7 +1266,16 @@ void libretro_probe_inputs(const char* tag)
 	bool frontendFastForward = hasThrottleState
 		&& throttleState.mode == RETRO_THROTTLE_FAST_FORWARD;
 
-	if(logCallback && hasThrottleState && throttleState.mode != _libretroLastThrottleMode) {
+	int avEnable = RETRO_AV_ENABLE_VIDEO | RETRO_AV_ENABLE_AUDIO;
+	bool hasAvEnableHint = env_cb
+		&& env_cb(RETRO_ENVIRONMENT_GET_AUDIO_VIDEO_ENABLE, &avEnable);
+	bool frontendVideoEnabled = !hasAvEnableHint
+		|| (avEnable & RETRO_AV_ENABLE_VIDEO) != 0;
+
+	if(_libretroFrameDiagnosticsEnabled
+		&& logCallback
+		&& hasThrottleState
+		&& throttleState.mode != _libretroLastThrottleMode) {
 		logCallback(
 			RETRO_LOG_INFO,
 			"[MesenCE][Pacing] mode=%u rate=%.3f fastForward=%d owner=RetroArch\n",
@@ -1315,6 +1334,13 @@ void libretro_probe_inputs(const char* tag)
 		}
 
 		bool validFrame = frame.FrameBuffer && frame.Width > 0 && frame.Height > 0;
+		if(_libretroFrameDiagnosticsEnabled
+			&& decoder
+			&& !frontendFastForward
+			&& validFrame
+			&& frame.FrameNumber != decoder->GetLastDecodedFrameNumber()) {
+			_libretroFramePublicationMismatches++;
+		}
 		bool newDecodedFrame = validFrame && (
 			!_libretroHasSubmittedFrame
 			|| frame.FrameNumber != _libretroLastSubmittedFrameNumber
@@ -1337,7 +1363,7 @@ void libretro_probe_inputs(const char* tag)
 				_geometryDirty = false;
 			}
 
-			if(_videoRefresh) {
+			if(frontendVideoEnabled && _videoRefresh) {
 				_videoRefresh(
 					frame.FrameBuffer,
 					frame.Width,
@@ -1355,7 +1381,7 @@ void libretro_probe_inputs(const char* tag)
 			_libretroDuplicatedFrames++;
 			// A null buffer asks the frontend to duplicate the previous frame.
 			// This is expected while fast-forward outruns HD texture decoding.
-			if(_videoRefresh) {
+			if(frontendVideoEnabled && _videoRefresh) {
 				uint32_t width = _lastReportedWidth ? _lastReportedWidth : 256;
 				uint32_t height = _lastReportedHeight ? _lastReportedHeight : 239;
 				if(_libretroCanDupe) {
@@ -1371,7 +1397,7 @@ void libretro_probe_inputs(const char* tag)
 			}
 		}
 
-		if(logCallback && (
+		if(_libretroFrameDiagnosticsEnabled && logCallback && (
 			_libretroRunCounter <= 8
 			|| _libretroPresentedFrames == 1
 			|| (_libretroRunCounter % 300) == 0
@@ -1383,7 +1409,7 @@ void libretro_probe_inputs(const char* tag)
 				(unsigned)(hasThrottleState ? throttleState.mode : RETRO_THROTTLE_NONE),
 				frontendFastForward ? 1 : 0,
 				(unsigned)_emu->GetFrameCount(),
-				(unsigned)(decoder ? decoder->GetFrameCount() : 0),
+				(unsigned)(decoder ? decoder->GetLastDecodedFrameNumber() : 0),
 				decoder && decoder->IsRunning() ? 1 : 0,
 				_videoRefresh ? 1 : 0,
 				frame.FrameBuffer,
@@ -1399,8 +1425,15 @@ void libretro_probe_inputs(const char* tag)
 				(unsigned long long)(_audioDevice ? _audioDevice->GetZeroWriteCount() : 0),
 				(unsigned long long)(_audioDevice ? _audioDevice->GetDroppedFrameCount() : 0)
 			);
+			if(_libretroFramePublicationMismatches > 0) {
+				logCallback(
+					RETRO_LOG_WARN,
+					"[MesenCE][FrameProbe] decoder/publisher mismatches=%llu\n",
+					(unsigned long long)_libretroFramePublicationMismatches
+				);
+			}
 		}
-	} else if(_videoRefresh) {
+	} else if(frontendVideoEnabled && _videoRefresh) {
 		_libretroEmptyFrames++;
 		_libretroDuplicatedFrames++;
 		if(_libretroCanDupe) {
