@@ -1285,6 +1285,12 @@ void libretro_probe_inputs(const char* tag)
 		}
 		_libretroWasFastForwarding = frontendFastForward;
 
+		// MESENCE_DECODER_FRAME_INTEGRITY_V1
+		// Only frontend fast-forward may trade video completeness for speed.
+		if(decoder) {
+			decoder->SetAllowFrameDropping(frontendFastForward);
+		}
+
 		consoleIf->RunFrame();
 
 		// RetroArch is the sole clock. We still perform MesenCE's non-pacing

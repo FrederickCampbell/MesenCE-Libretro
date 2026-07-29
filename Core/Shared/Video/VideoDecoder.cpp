@@ -146,6 +146,11 @@ void VideoDecoder::DecodeFrame(bool forRewind)
 	//Rewind manager will take care of sending the correct frame to the video renderer
 	_emu->GetRewindManager()->SendFrame(convertedFrame, forRewind);
 
+	// MESENCE_DECODER_FRAME_INTEGRITY_V1
+	// Publish the exact frame number only after conversion and renderer
+	// publication are complete.
+	_lastDecodedFrameNumber.store(_frame.FrameNumber, std::memory_order_release);
+
 	// MESENCE_PERF_V1_0_25: Publish the completed frame and wake retro_run
 	// immediately instead of making it poll in 15 ms increments.
 	_frameChanged.store(false, std::memory_order_release);
@@ -190,11 +195,15 @@ void VideoDecoder::UpdateFrame(RenderedFrame frame, bool sync, bool forRewind)
 	}
 
 	if(_frameChanged.load(std::memory_order_acquire)) {
-		// MESENCE_LIBRETRO_DROP_BUSY_VIDEO_FRAME
-		// RetroArch owns pacing. During fast-forward, retro_run() intentionally
-		// does not wait for every HD decode. If the decoder is still busy, drop
-		// this video frame instead of turning decode time into a frame limiter.
-		return;
+		if(_allowFrameDropping.load(std::memory_order_acquire)) {
+			// Fast-forward uses a deliberate latest-available-frame policy.
+			_busyFrameDrops.fetch_add(1, std::memory_order_relaxed);
+			return;
+		}
+
+		// Normal-speed playback is lossless. If an unexpected preceding
+		// conversion is still active, complete it before accepting this frame.
+		WaitForAsyncFrameDecode();
 	}
 
 	_emu->OnBeforeSendFrame();
@@ -221,6 +230,9 @@ void VideoDecoder::StartThread()
 		_videoFilter->SetBaseFrameInfo(_baseFrameSize);
 		_stopFlag.store(false, std::memory_order_relaxed);
 		_frameChanged.store(false, std::memory_order_relaxed);
+		_allowFrameDropping.store(false, std::memory_order_relaxed);
+		_lastDecodedFrameNumber.store(0, std::memory_order_relaxed);
+		_busyFrameDrops.store(0, std::memory_order_relaxed);
 		_frameCount = 0;
 		_waitForFrame.Reset();
 		_frameDecoded.Reset();

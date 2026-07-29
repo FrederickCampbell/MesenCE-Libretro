@@ -28,6 +28,10 @@ private:
 
 	atomic<bool> _frameChanged;
 	atomic<bool> _stopFlag;
+	// MESENCE_DECODER_FRAME_INTEGRITY_V1
+	atomic<bool> _allowFrameDropping { false };
+	atomic<uint32_t> _lastDecodedFrameNumber { 0 };
+	atomic<uint64_t> _busyFrameDrops { 0 };
 	uint32_t _frameCount = 0;
 	bool _forceFilterUpdate = false;
 
@@ -66,6 +70,18 @@ public:
 	void UpdateFrame(RenderedFrame frame, bool sync, bool forRewind);
 
 	void WaitForAsyncFrameDecode();
+	void SetAllowFrameDropping(bool allow)
+	{
+		_allowFrameDropping.store(allow, std::memory_order_release);
+	}
+	uint32_t GetLastDecodedFrameNumber() const
+	{
+		return _lastDecodedFrameNumber.load(std::memory_order_acquire);
+	}
+	uint64_t GetBusyFrameDropCount() const
+	{
+		return _busyFrameDrops.load(std::memory_order_relaxed);
+	}
 
 	bool IsRunning();
 	void StartThread();
