@@ -273,7 +273,10 @@ void HdNesPack<scale>::DrawBulkBackgroundLayer(
 
 	uint32_t widthHd = (xEnd - xStart) * scale;
 	int32_t sourceYHd = bgConfig.BgSourceYHd;
-	int32_t initialSourceXHd = bgConfig.BgSourceXHd[xStart];
+	int32_t initialSourceXHd = bgConfig.BgSourceStartXHd + (int32_t)xStart * (int32_t)scale;
+	if(initialSourceXHd >= bgConfig.BgSourceWidthHd) {
+		initialSourceXHd %= bgConfig.BgSourceWidthHd;
+	}
 	if(!bgConfig.BgRepeatY
 		&& (sourceYHd < 0 || sourceYHd + (int32_t)scale > bgConfig.BgSourceHeightHd)) {
 		return;
@@ -457,8 +460,6 @@ void HdNesPack<scale>::OnLineStart(HdPpuPixelInfo& lineFirstPixel, uint8_t y)
 			delta += 512;
 		}
 
-		// A real camera moves only a few pixels per frame. A larger discontinuity
-		// is a level load, warp, rewind, or state load and should start fresh.
 		if(delta > 64 || delta < -64) {
 			_continuousScrollX[y] = rawScrollX;
 		} else {
@@ -472,15 +473,46 @@ void HdNesPack<scale>::OnLineStart(HdPpuPixelInfo& lineFirstPixel, uint8_t y)
 	_lastRawScrollX[y] = (uint16_t)rawScrollX;
 
 	int32_t scrollY = (((lineFirstPixel.TmpVideoRamAddr & 0x3E0) >> 2) | ((lineFirstPixel.TmpVideoRamAddr & 0x7000) >> 12)) + ((lineFirstPixel.TmpVideoRamAddr & 0x800) ? 240 : 0);
+
+	// MESENCE_HD_BACKGROUND_PREPARATION_V1
+	// Shared by all backgrounds on this scanline.
+	auto normalizeHdCoordinate = [](int32_t value, int32_t size) {
+		if(size <= 0) {
+			return 0;
+		}
+		if((uint32_t)value < (uint32_t)size) {
+			return value;
+		}
+		if(value >= size) {
+			value -= size;
+			if(value < size) {
+				return value;
+			}
+		} else {
+			value += size;
+			if(value >= 0) {
+				return value;
+			}
+		}
+		value %= size;
+		return value < 0 ? value + size : value;
+	};
+
+	// First pass: prepare metadata and visibility without building fallback
+	// coordinate tables.
 	for(int layer = 0; layer < 4; layer++) {
 		for(int i = 0; i < _activeBgCount[layer]; i++) {
 			HdBgConfig& cfg = _bgConfig[layer * HdNesPack::PriorityLevelsPerLayer + i];
 			if(cfg.BackgroundIndex < 0) {
+				cfg.Background = nullptr;
+				cfg.BgMinX = -1;
+				cfg.BgMaxX = -1;
 				continue;
 			}
 
 			HdBackgroundInfo& bgInfo = _hdData->BackgroundsByPriority[cfg.BgPriority][cfg.BackgroundIndex];
 			bgInfo.Data->Init();
+
 			bool repeatX = bgInfo.WrapMode == HdBackgroundWrapMode::RepeatX || bgInfo.WrapMode == HdBackgroundWrapMode::RepeatXY;
 			bool repeatY = bgInfo.WrapMode == HdBackgroundWrapMode::RepeatY || bgInfo.WrapMode == HdBackgroundWrapMode::RepeatXY;
 			bool gameplayScroll = bgInfo.ScrollMode == HdBackgroundScrollMode::Gameplay;
@@ -488,12 +520,9 @@ void HdNesPack<scale>::OnLineStart(HdPpuPixelInfo& lineFirstPixel, uint8_t y)
 			int32_t selectedContinuousScrollX = gameplayScroll ? _gameplayContinuousScrollX : continuousScrollX;
 			int32_t selectedScrollY = gameplayScroll ? _gameplayScrollY : scrollY;
 			int32_t horizontalScroll = repeatX ? selectedContinuousScrollX : selectedRawScrollX;
+
 			cfg.BgScrollX = (int32_t)(horizontalScroll * bgInfo.HorizontalScrollRatio);
 			cfg.BgScrollY = (int32_t)(selectedScrollY * bgInfo.VerticalScrollRatio);
-
-			// HD GAMEPLAY SPAN FAST PATH V111S3
-			// Preserve sub-NES-pixel motion, but prepare all repeating coordinates
-			// once per scanline rather than wrapping every rendered pixel.
 			cfg.BgScrollXHd = gameplayScroll && repeatX
 				? (int32_t)std::lround((double)horizontalScroll * bgInfo.HorizontalScrollRatio * (double)scale)
 				: cfg.BgScrollX * (int32_t)scale;
@@ -514,28 +543,6 @@ void HdNesPack<scale>::OnLineStart(HdPpuPixelInfo& lineFirstPixel, uint8_t y)
 				&& bgInfo.Brightness == 255
 				&& bgInfo.Data->IsFullyOpaque;
 
-			auto normalizeHdCoordinate = [](int32_t value, int32_t size) {
-				if(size <= 0) {
-					return 0;
-				}
-				if((uint32_t)value < (uint32_t)size) {
-					return value;
-				}
-				if(value >= size) {
-					value -= size;
-					if(value < size) {
-						return value;
-					}
-				} else {
-					value += size;
-					if(value >= 0) {
-						return value;
-					}
-				}
-				value %= size;
-				return value < 0 ? value + size : value;
-			};
-
 			if(repeatX && cfg.BgSourceWidthHd > 0) {
 				cfg.BgScrollXHd = normalizeHdCoordinate(cfg.BgScrollXHd, cfg.BgSourceWidthHd);
 			}
@@ -543,18 +550,7 @@ void HdNesPack<scale>::OnLineStart(HdPpuPixelInfo& lineFirstPixel, uint8_t y)
 				cfg.BgScrollYHd = normalizeHdCoordinate(cfg.BgScrollYHd, cfg.BgSourceHeightHd);
 			}
 
-			int32_t preparedXHd = cfg.BgScrollXHd;
-			for(int32_t screenX = 0; screenX < NesConstants::ScreenWidth; screenX++) {
-				cfg.BgSourceXHd[screenX] = preparedXHd;
-				preparedXHd += (int32_t)scale;
-				if(repeatX && cfg.BgSourceWidthHd > 0 && preparedXHd >= cfg.BgSourceWidthHd) {
-					preparedXHd -= cfg.BgSourceWidthHd;
-					if(preparedXHd >= cfg.BgSourceWidthHd) {
-						preparedXHd %= cfg.BgSourceWidthHd;
-					}
-				}
-			}
-
+			cfg.BgSourceStartXHd = cfg.BgScrollXHd;
 			cfg.BgSourceYHd = ((int32_t)y * (int32_t)scale) + cfg.BgScrollYHd;
 			if(repeatY && cfg.BgSourceHeightHd > 0) {
 				cfg.BgSourceYHd = normalizeHdCoordinate(cfg.BgSourceYHd, cfg.BgSourceHeightHd);
@@ -574,6 +570,46 @@ void HdNesPack<scale>::OnLineStart(HdPpuPixelInfo& lineFirstPixel, uint8_t y)
 			} else {
 				cfg.BgMinX = -1;
 				cfg.BgMaxX = -1;
+			}
+		}
+	}
+
+	// Decide bulk rendering before preparing fallback-only X tables.
+	_bulkBehindBgSpritesReady = CanBulkRenderBehindBgSprites();
+
+	// Second pass: populate only the coordinate entries that the fallback
+	// renderer can read. Bulk group-0 backgrounds skip the table entirely.
+	for(int layer = 0; layer < 4; layer++) {
+		if(layer == 0 && _bulkBehindBgSpritesReady) {
+			continue;
+		}
+
+		for(int i = 0; i < _activeBgCount[layer]; i++) {
+			HdBgConfig& cfg = _bgConfig[layer * HdNesPack::PriorityLevelsPerLayer + i];
+			if(cfg.Background == nullptr || cfg.BgMinX > cfg.BgMaxX || cfg.BgSourceWidthHd <= 0) {
+				continue;
+			}
+
+			int32_t firstScreenX = std::max<int32_t>(0, cfg.BgMinX);
+			int32_t lastScreenX = std::min<int32_t>(NesConstants::ScreenWidth - 1, cfg.BgMaxX);
+			if(firstScreenX > lastScreenX) {
+				continue;
+			}
+
+			int32_t preparedXHd = cfg.BgSourceStartXHd + firstScreenX * (int32_t)scale;
+			if(cfg.BgRepeatX) {
+				preparedXHd = normalizeHdCoordinate(preparedXHd, cfg.BgSourceWidthHd);
+			}
+
+			for(int32_t screenX = firstScreenX; screenX <= lastScreenX; screenX++) {
+				cfg.BgSourceXHd[screenX] = preparedXHd;
+				preparedXHd += (int32_t)scale;
+				if(cfg.BgRepeatX && preparedXHd >= cfg.BgSourceWidthHd) {
+					preparedXHd -= cfg.BgSourceWidthHd;
+					if(preparedXHd >= cfg.BgSourceWidthHd) {
+						preparedXHd %= cfg.BgSourceWidthHd;
+					}
+				}
 			}
 		}
 	}
@@ -1251,9 +1287,7 @@ void HdNesPack<scale>::Process(HdScreenInfo* hdScreenInfo, uint32_t* outputBuffe
 		uint32_t lineStartIndex = bufferIndex;
 
 		// HD GAMEPLAY BULK STRIP COMPOSITOR V111S4
-		// Precompose the full lowest-priority stack once, then GetPixels handles
-		// only background sprites, tiles, foreground sprites, and higher layers.
-		_bulkBehindBgSpritesReady = CanBulkRenderBehindBgSprites();
+		// OnLineStart already selected bulk/fallback mode for this scanline.
 		if(_bulkBehindBgSpritesReady) {
 			DrawBulkBehindBgSpritesLine(
 				i,

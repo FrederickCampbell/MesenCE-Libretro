@@ -57,6 +57,9 @@ private:
 		int32_t BgSourceTopHd = 0;
 		int32_t BgSourceWidthHd = 0;
 		int32_t BgSourceHeightHd = 0;
+		// MESENCE_HD_BACKGROUND_PREPARATION_V1
+		// Scalar origin is consumed directly by the bulk compositor.
+		int32_t BgSourceStartXHd = 0;
 		int32_t BgSourceXHd[NesConstants::ScreenWidth] = {};
 		int32_t BgSourceYHd = 0;
 		bool BgRepeatX = false;
