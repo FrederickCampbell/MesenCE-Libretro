@@ -21,6 +21,7 @@ BaseVideoFilter::~BaseVideoFilter()
 {
 	auto lock = _frameLock.AcquireSafe();
 	delete[] _outputBuffer;
+	delete[] _nextOutputBuffer;
 }
 
 void BaseVideoFilter::SetBaseFrameInfo(FrameInfo frameInfo)
@@ -43,8 +44,14 @@ void BaseVideoFilter::UpdateBufferSize()
 	if(_bufferSize != newBufferSize) {
 		_frameLock.Acquire();
 		delete[] _outputBuffer;
+		delete[] _nextOutputBuffer;
 		_bufferSize = newBufferSize;
 		_outputBuffer = new uint32_t[newBufferSize];
+		_nextOutputBuffer = new uint32_t[newBufferSize];
+		// Deterministic first-use contents prevent allocator/debug-fill colors
+		// from ever becoming a visible frame during geometry transitions.
+		std::fill_n(_outputBuffer, newBufferSize, 0xFF000000);
+		std::fill_n(_nextOutputBuffer, newBufferSize, 0xFF000000);
 		_frameLock.Release();
 	}
 }
@@ -101,6 +108,10 @@ FrameInfo BaseVideoFilter::SendFrame(uint16_t* ppuOutputBuffer, uint32_t frameNu
 	FrameInfo frameInfo = GetFrameInfo();
 	_frameInfo = frameInfo;
 	UpdateBufferSize();
+	// The previously published frame remains in _nextOutputBuffer while
+	// this frame is rendered into _outputBuffer. The swap happens only
+	// after the geometry and storage are valid.
+	std::swap(_outputBuffer, _nextOutputBuffer);
 	ApplyFilter(ppuOutputBuffer);
 	_ppuOutputBuffer = nullptr;
 	return frameInfo;

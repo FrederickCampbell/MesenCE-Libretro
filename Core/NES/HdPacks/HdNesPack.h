@@ -119,6 +119,9 @@ private:
 	// background group can be safely precomposed before tile/sprite rendering.
 	bool _bulkParallaxEnabled = true;
 	bool _bulkBehindBgSpritesReady = false;
+	// MESENCE_RENDERER_CORRECTNESS_V1
+	uint64_t _candidateOverflowCount = 0;
+	uint32_t _candidateHighWatermark = 0;
 
 	template<HdPackBlendMode blendMode>
 	__forceinline void BlendColors(uint8_t output[4], uint8_t input[4]);

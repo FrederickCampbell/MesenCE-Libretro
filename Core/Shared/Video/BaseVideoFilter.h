@@ -8,7 +8,10 @@ class Emulator;
 class BaseVideoFilter
 {
 private:
+	// MESENCE_RENDERER_CORRECTNESS_V1
+	// The published frame and the decoder write target must never alias.
 	uint32_t* _outputBuffer = nullptr;
+	uint32_t* _nextOutputBuffer = nullptr;
 	double _yiqToRgbMatrix[6] = {};
 	uint32_t _bufferSize = 0;
 	SimpleLock _frameLock;

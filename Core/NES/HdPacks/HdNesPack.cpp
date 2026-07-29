@@ -972,25 +972,85 @@ void HdNesPack<scale>::GetPixels(uint32_t x, uint32_t y, HdPpuPixelInfo& pixelIn
 		hdPackTileInfo = GetCachedMatchingTile(x, y, &pixelInfo.Tile);
 	}
 
+	static constexpr int MaxLocalCandidates = 64;
+
 	struct LocalCandidate {
 		HdPpuTileInfo* Tile = nullptr;
 		HdPackTileInfo* HdTile = nullptr;
 		bool Synthetic = false;
+		uint32_t NativeKey = 0;
+		uint32_t TargetKey = 0;
+		uint32_t StateKey = 0;
+		uint16_t SourceOrder = 0;
 	};
 
-	LocalCandidate bgSprites[16] = {};
-	LocalCandidate fgSprites[16] = {};
+	LocalCandidate bgSprites[MaxLocalCandidates] = {};
+	LocalCandidate fgSprites[MaxLocalCandidates] = {};
 	int bgCount = 0;
 	int fgCount = 0;
+	uint16_t sourceOrder = 0;
+
+	auto mixStableKey = [](uint32_t hash, uint32_t value) {
+		hash ^= value;
+		hash *= 16777619u;
+		return hash;
+	};
+
+	auto buildTargetKey = [&](HdPackTileInfo* hdTile) {
+		if(!hdTile) {
+			return 0u;
+		}
+		uint32_t key = 2166136261u;
+		key = mixStableKey(key, hdTile->BitmapIndex);
+		key = mixStableKey(key, hdTile->X);
+		key = mixStableKey(key, hdTile->Y);
+		key = mixStableKey(key, hdTile->Width);
+		key = mixStableKey(key, hdTile->Height);
+		key = mixStableKey(key, (uint32_t)hdTile->Brightness);
+		return key;
+	};
+
+	auto buildStateKey = [&](HdPpuTileInfo* tile) {
+		uint32_t key = 2166136261u;
+		key = mixStableKey(key, tile->TileIndex);
+		key = mixStableKey(key, tile->PaletteColors);
+		key = mixStableKey(key, tile->OffsetX | ((uint32_t)tile->OffsetY << 8));
+		key = mixStableKey(
+			key,
+			(tile->HorizontalMirroring ? 1u : 0u)
+				| (tile->VerticalMirroring ? 2u : 0u)
+				| (tile->BackgroundPriority ? 4u : 0u)
+		);
+		return key;
+	};
 
 	auto pushCandidate = [&](LocalCandidate* bucket, int& count, HdPpuTileInfo* tile, HdPackTileInfo* hdTile, bool synthetic) {
-		if(count >= 16) {
+		if(count >= MaxLocalCandidates) {
+			_candidateOverflowCount++;
+			if(_lightweightPriorityDiagnostics && (
+				_candidateOverflowCount == 1
+				|| (_candidateOverflowCount % 1024) == 0
+			)) {
+				MessageManager::Log(
+					"[HDPack] Local sprite candidate capacity exceeded. total="
+					+ std::to_string(_candidateOverflowCount)
+				);
+			}
 			return;
 		}
-		bucket[count].Tile = tile;
-		bucket[count].HdTile = hdTile;
-		bucket[count].Synthetic = synthetic;
-		count++;
+
+		LocalCandidate& candidate = bucket[count++];
+		candidate.Tile = tile;
+		candidate.HdTile = hdTile;
+		candidate.Synthetic = synthetic;
+		candidate.NativeKey = tile->GetHashCode();
+		candidate.TargetKey = buildTargetKey(hdTile);
+		candidate.StateKey = buildStateKey(tile);
+		candidate.SourceOrder = sourceOrder++;
+		_candidateHighWatermark = std::max<uint32_t>(
+			_candidateHighWatermark,
+			(uint32_t)count
+		);
 	};
 
 	for(uint8_t k = 0; k < pixelInfo.SpriteCount; k++) {
@@ -1015,17 +1075,34 @@ void HdNesPack<scale>::GetPixels(uint32_t x, uint32_t y, HdPpuPixelInfo& pixelIn
 	}
 
 	auto sortCandidates = [](LocalCandidate* bucket, int count) {
-		std::stable_sort(bucket, bucket + count, [](const LocalCandidate& a, const LocalCandidate& b) {
-			if(a.Tile->SpritePriorityRank != b.Tile->SpritePriorityRank) {
-				return a.Tile->SpritePriorityRank > b.Tile->SpritePriorityRank;
-			}
+		std::sort(bucket, bucket + count, [](const LocalCandidate& a, const LocalCandidate& b) {
+			// Candidates are drawn from first to last, so lower NES OAM/root
+			// indexes sort later and remain visually on top.
 			if(a.Tile->RootSpriteIndex != b.Tile->RootSpriteIndex) {
 				return a.Tile->RootSpriteIndex > b.Tile->RootSpriteIndex;
 			}
+			if(a.Tile->SpritePriorityRank != b.Tile->SpritePriorityRank) {
+				return a.Tile->SpritePriorityRank > b.Tile->SpritePriorityRank;
+			}
+			// Synthetic pieces stay directly behind their native root tile.
 			if(a.Synthetic != b.Synthetic) {
 				return a.Synthetic && !b.Synthetic;
 			}
-			return a.Tile->ProvenanceId < b.Tile->ProvenanceId;
+			if(a.Tile->ProvenanceId != b.Tile->ProvenanceId) {
+				return a.Tile->ProvenanceId > b.Tile->ProvenanceId;
+			}
+			if(a.NativeKey != b.NativeKey) {
+				return a.NativeKey > b.NativeKey;
+			}
+			if(a.TargetKey != b.TargetKey) {
+				return a.TargetKey > b.TargetKey;
+			}
+			if(a.StateKey != b.StateKey) {
+				return a.StateKey > b.StateKey;
+			}
+			// Final total-order key. If every visual identity key is equal, this
+			// preserves the legacy low-source-index-wins behavior.
+			return a.SourceOrder > b.SourceOrder;
 		});
 	};
 
